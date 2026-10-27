@@ -479,12 +479,18 @@ class LiveRemote(ControlSurface):
         t.delete_device(int(device))
         return "deleted %r from %r" % (name, t.name)
 
-    # Browser: Places (user_folders) + stock categories.
-    def _browser_roots(self):
+    # Browser: Places (user_folders) + stock categories. Item search walks only SEARCHED; packs and samples are too big
+    # to walk on the main thread, and what packs hold also shows up under sounds, drums and the device roots.
+    ROOTS = ("sounds", "drums", "instruments", "audio_effects", "midi_effects", "max_for_live", "plugins", "clips", "samples", "packs", "user_library", "current_project")
+    SEARCHED = ("audio_effects", "midi_effects", "instruments", "max_for_live", "plugins", "user_library", "sounds", "drums")
+
+    def _browser_roots(self, searched_only=False):
         b = self.application().browser
         roots = [("Places/" + f.name, f) for f in b.user_folders]
-        for attr in ("audio_effects", "midi_effects", "instruments", "max_for_live", "plugins", "user_library"):
-            roots.append((attr, getattr(b, attr)))
+        for attr in self.SEARCHED if searched_only else self.ROOTS:
+            root = getattr(b, attr, None)  # older Live versions lack some
+            if root is not None:
+                roots.append((attr, root))
         return roots
 
     def _find_item(self, name, max_depth=6):
@@ -507,7 +513,7 @@ class LiveRemote(ControlSurface):
                         return hit
             return None
 
-        for label, root in self._browser_roots():
+        for label, root in self._browser_roots(searched_only=True):
             hit = walk(root, 0)
             if hit:
                 return label, hit
@@ -526,7 +532,7 @@ class LiveRemote(ControlSurface):
                 parts = parts[len(lp):]
                 break
         if node is None:
-            raise ValueError("unknown root in %r" % path)
+            raise ValueError("unknown root in %r; the roots are %s" % (path, ", ".join(label for label, _ in self._browser_roots())))
         for p in parts:
             nxt = [c for c in node.iter_children if c.name == p]
             if not nxt:

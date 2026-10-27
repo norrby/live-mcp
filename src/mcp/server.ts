@@ -369,7 +369,7 @@ export function createServer(deps: ServerDeps): McpServer {
   server.registerTool(
     "browse",
     {
-      description: 'List Live\'s browser: the roots when path is empty, else the children of a path such as "user_library/Presets/Instruments/External Instrument" or "Places/<folder>". Loadable items can be given to load_browser_item.' + viaBridge,
+      description: 'List Live\'s browser: the roots when path is empty, else the children of a path such as "user_library/Presets/Instruments/External Instrument" or "Places/<folder>". The roots are Live\'s browser categories (sounds, drums, instruments, audio_effects, midi_effects, max_for_live, plugins, clips, samples, packs, user_library, current_project) and Places. Loadable items can be given to load_browser_item; it finds items by name under Places and every root but packs, samples, clips and current_project.' + viaBridge,
       inputSchema: { path: z.string().default("") },
     },
     guarded(({ path }) => bridge.call("browser", [path])),
