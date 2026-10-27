@@ -276,11 +276,20 @@ export function createServer(deps: ServerDeps): McpServer {
 
   server.registerTool(
     "get_parameters",
-    { description: "Current values of parameters by address (device parameters, or track mixer: t0/vol, t0/pan, t0/send0).", inputSchema: { addresses: z.array(address).min(1) } },
+    { description: "Current values of parameters by address (device parameters, or track mixer: t0/vol, t0/pan, t0/send0). An address that is not a parameter gets an error of its own; the others are still read.", inputSchema: { addresses: z.array(address).min(1) } },
     guarded(async ({ addresses }) => {
-      const params = addresses.map((a) => live.parameter(a));
+      const found = addresses.map((a) => {
+        try {
+          return { address: a, param: live.parameter(a) };
+        } catch (e) {
+          return { address: a, error: explain(e) };
+        }
+      });
+      const params = found.flatMap((f) => (f.param ? [f.param] : []));
+      if (!params.length) throw new LiveError(found.map((f) => f.error).join("; "));
       const vals = await live.readValues(params);
-      return addresses.map((a, i) => ({ address: a, name: params[i].name, value: vals[i], min: params[i].min, max: params[i].max }));
+      let i = 0;
+      return found.map((f) => (f.param ? { address: f.address, name: f.param.name, value: vals[i++], min: f.param.min, max: f.param.max } : { address: f.address, error: f.error }));
     }),
   );
 
@@ -733,7 +742,7 @@ export function createServer(deps: ServerDeps): McpServer {
       }
       try {
         if (fs.statSync(file).size > 200 * 1024 * 1024) throw new LiveError("the rendered file is larger than 200 MB; measure a shorter range");
-        return { track, from: start, to: end, ...measure(parseAudio(fs.readFileSync(file))), note: "the track's clips before its effects" };
+        return { track, from: start, to: end, ...measure(parseAudio(fs.readFileSync(file))), note: "the track's clips before its effects; null dBFS or LUFS means no signal at all (minus infinity)" };
       } finally {
         fs.rm(file, { force: true }, () => {});
       }

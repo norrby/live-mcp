@@ -117,6 +117,9 @@ test("explains bad addresses and missing objects", async () => {
   assert.match((await call(c, "get_parameters", { addresses: ["t7/d0/p1"] })).data, /no track 7 \(there are 2\)/);
   assert.match((await call(c, "list_parameters", { device: "t0/d0/p1" })).data, /not a device/);
   assert.match((await call(c, "get_parameters", { addresses: ["x1"] })).data, /bad address segment "x1"/);
+  const mixed = (await call(c, "get_parameters", { addresses: ["t0/d0", "t0/vol"] })).data;
+  assert.match(mixed[0].error, /Device, not a parameter|not a parameter/, "a wrong address gets its own error");
+  assert.equal(typeof mixed[1].value, "number", "the others are still read");
   assert.match((await call(c, "set_parameters", { changes: [{ address: "t0/d0/p1", value: 1 }, { address: "t0/d0/p1", value: 2 }] })).data, /appears twice/);
   await c.close();
 });
