@@ -1,19 +1,22 @@
 // capabilities.ts – the honest contract: what the Extensions SDK lets us do, what it does not, and why.
 // The bridge (LiveRemote control surface script) fills some gaps when it is running; the answer says which.
 export interface CapabilityState {
-  bridgeConfigured: boolean;
   bridgeReachable: boolean;
   knownDevices: number;
+  /** how the .amxd files are read: directly, or through the bridge because Live forbids it */
+  amxdVia: "files" | "bridge";
 }
 
 export function capabilities(state: CapabilityState) {
-  const bridge = state.bridgeReachable ? "yes, through the LiveRemote bridge" : state.bridgeConfigured ? "not now: the LiveRemote bridge is configured but not reachable" : "no: the LiveRemote bridge is not configured";
+  const bridge = state.bridgeReachable
+    ? "yes, through the LiveRemote bridge"
+    : "not now: the LiveRemote bridge is not reachable (install it in the User Library's Remote Scripts folder and pick it as a Control Surface)";
   return {
     can: [
       "read the set: tracks, return tracks, main track, devices, rack chains, parameters (names, ranges, choices, values)",
       "set parameters, several in one undo step; set tempo; rename, mute, solo, arm tracks",
       "insert and delete built-in Live devices; create and delete tracks",
-      `recognise Max for Live devices from their .amxd files (${state.knownDevices} known) and give long parameter names, units, choices and help texts`,
+      `recognise Max for Live devices from their .amxd files (${state.knownDevices} known${state.amxdVia === "bridge" ? ", read through the LiveRemote bridge" : ""}) and give long parameter names, units, choices and help texts`,
       "find parameters by name across the set",
       "clips: create MIDI clips in session slots or the arrangement, audio clips from files, read and replace notes, rename, loop, mute, delete",
     ],

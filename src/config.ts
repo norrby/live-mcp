@@ -13,8 +13,9 @@ export interface Config {
   token: string;
   /** folders searched (recursively) for .amxd files, to recognise Max for Live devices in the set */
   amxdDirectories: string[];
+  /** LiveRemote needs no token unless one was given to it; then the same token here, or the file that holds it */
   bridge: { port: number; tokenFile?: string; token?: string };
-  /** Live's User Library: presets are searched there, and the LiveRemote bridge is installed there */
+  /** Live's User Library: Max for Live devices are searched in its Presets folder */
   userLibrary: string;
   file: string;
 }
@@ -25,10 +26,6 @@ export const DEFAULT_BRIDGE_PORT = 9870;
 /** Where Live keeps the User Library unless the user moved it. */
 export function defaultUserLibrary(home = os.homedir(), platform = process.platform): string {
   return path.join(home, platform === "win32" ? "Documents" : "Music", "Ableton", "User Library");
-}
-
-export function remoteScriptDirectory(userLibrary: string): string {
-  return path.join(userLibrary, "Remote Scripts", "LiveRemote");
 }
 
 export function loadConfig(storageDirectory: string | undefined, log: (...a: unknown[]) => void): Config {
@@ -50,7 +47,6 @@ export function loadConfig(storageDirectory: string | undefined, log: (...a: unk
   if (!Array.isArray(data.amxdDirectories)) (data.amxdDirectories = [path.join(data.userLibrary, "Presets")]), (changed = true);
   if (!data.bridge || typeof data.bridge !== "object") (data.bridge = { port: DEFAULT_BRIDGE_PORT }), (changed = true);
   if (typeof data.bridge.port !== "number") (data.bridge.port = DEFAULT_BRIDGE_PORT), (changed = true);
-  if (!data.bridge.token && !data.bridge.tokenFile) (data.bridge.tokenFile = path.join(remoteScriptDirectory(data.userLibrary), ".liveremote-token")), (changed = true);
   if (changed) {
     const { file: _f, ...toWrite } = data as Config;
     try {

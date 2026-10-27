@@ -4,6 +4,7 @@ import {
   AudioClip, AudioTrack, Chain, Clip, ClipSlot, DataModelObject, Device, DeviceParameter, MidiClip, MidiTrack, RackDevice, Track,
   type ExtensionContext, type NoteDescription,
 } from "@ableton-extensions/sdk";
+import * as path from "node:path";
 import { parseAddress, type Segment } from "./address.js";
 import { LiveError } from "./errors.js";
 
@@ -298,15 +299,22 @@ export class LiveAdapter {
     if (!(t instanceof AudioTrack)) throw new LiveError(`${track} is not an audio track`);
     if (opts.slot !== undefined && opts.start !== undefined) throw new LiveError("give slot (session) or start (arrangement), not both");
     if (opts.slot !== undefined && opts.length !== undefined) throw new LiveError("length applies to arrangement clips only; a session clip takes the file's length");
-    if (!opts.file.startsWith("/")) throw new LiveError(`file must be an absolute path, not "${opts.file}"`);
-    if (opts.slot !== undefined) {
-      const slot = at(t.clipSlots, opts.slot, "clip slot", `${track}/s${opts.slot}`);
-      if (slot.clip) throw new LiveError(`slot ${track}/s${opts.slot} already holds "${slot.clip.name}"; delete it first or pick another slot`);
-      const clip = await slot.createAudioClip({ filePath: opts.file, isWarped: opts.warped });
+    if (!path.isAbsolute(opts.file)) throw new LiveError(`file must be an absolute path, not "${opts.file}"`);
+    const slot = opts.slot === undefined ? undefined : at(t.clipSlots, opts.slot, "clip slot", `${track}/s${opts.slot}`);
+    if (slot?.clip) throw new LiveError(`slot ${track}/s${opts.slot} already holds "${slot.clip.name}"; delete it first or pick another slot`);
+    if (opts.slot === undefined && opts.start === undefined) throw new LiveError("give slot (session) or start (arrangement, in beats)");
+    // An extension may not read files outside its own folder; Live copies the file into the project on its behalf.
+    let filePath: string;
+    try {
+      filePath = await this.context.resources.importIntoProject(opts.file);
+    } catch (e) {
+      throw new LiveError(`Live could not import ${opts.file}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    if (slot) {
+      const clip = await slot.createAudioClip({ filePath, isWarped: opts.warped });
       return { clip, address: `${track}/s${opts.slot}` };
     }
-    if (opts.start === undefined) throw new LiveError("give slot (session) or start (arrangement, in beats)");
-    const clip = await t.createAudioClip({ filePath: opts.file, startTime: opts.start, duration: opts.length, isWarped: opts.warped });
+    const clip = await t.createAudioClip({ filePath, startTime: opts.start!, duration: opts.length, isWarped: opts.warped });
     return { clip, address: this.arrangementAddress(t, track, clip) };
   }
 

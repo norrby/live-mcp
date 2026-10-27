@@ -129,17 +129,17 @@ test("delete_device and locateDevice work for a device inside a rack chain", asy
   const c = await client();
   const r = await call(c, "list_parameters", { device: "t1/d0/c0/d0", values: false });
   assert.equal(r.data.name, "Saturator");
-  assert.match((await call(c, "transport")).data, /bridge not configured/);
+  assert.match((await call(c, "transport")).data, /LiveRemote is not reachable/);
   await c.close();
 });
 
-test("bridge tools fail with an explanation when the bridge is not configured", async () => {
+test("bridge tools fail with an explanation when the bridge is not reachable", async () => {
   const c = await client();
   const r = await call(c, "transport");
   assert.equal(r.ok, false);
-  assert.match(r.data, /bridge not configured/);
+  assert.match(r.data, /LiveRemote is not reachable/);
   const caps = await call(c, "get_capabilities");
-  assert.match(caps.data.viaBridge[0].available, /not configured/);
+  assert.match(caps.data.viaBridge[0].available, /not reachable/);
   await c.close();
 });
 
@@ -219,7 +219,10 @@ test("clips: create in a slot and in the arrangement, notes in one undo step, re
 
   const audio = (await call(c, "create_audio_clip", { track: "t1", slot: 1, file: "/samples/kick.wav" })).data;
   assert.equal(audio.kind, "audio");
-  assert.equal(audio.file, "/samples/kick.wav");
+  assert.equal(audio.file, "/project/Samples/Imported/kick.wav", "the clip plays Live's imported copy");
+  const missing = await call(c, "create_audio_clip", { track: "t1", start: 0, file: "/samples/missing.wav" });
+  assert.equal(missing.ok, false);
+  assert.match(missing.data, /Live could not import \/samples\/missing\.wav/);
   assert.match((await call(c, "get_notes", { clip: "t1/s1" })).data, /audio clip/);
 
   assert.equal((await call(c, "delete_clip", { clip: "t0/a0" })).data.deleted, "Fill");

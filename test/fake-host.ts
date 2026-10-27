@@ -267,7 +267,12 @@ export class FakeLive {
       commands: { registerCommand() {}, executeCommand() {} },
       dataModel: this.dataModel(),
       environment: { storageDirectory: undefined, tempDirectory: undefined, language: "EN" },
-      resources: {},
+      resources: {
+        importIntoProject(filePath: string, ok: (p: string) => void, fail: (e: string) => void) {
+          if (filePath.includes("missing")) fail(`no such file: ${filePath}`);
+          else ok(`/project/Samples/Imported/${filePath.split("/").pop()}`);
+        },
+      },
       ui: {},
     };
     return { hostApiVersion: "1.0.0", initializeExtensionHost: () => api } as unknown as ActivationContext;

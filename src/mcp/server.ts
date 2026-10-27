@@ -65,7 +65,7 @@ export function createServer(deps: ServerDeps): McpServer {
   };
 
   const viaBridge = " Needs the LiveRemote bridge (see get_capabilities).";
-  const capabilityState = async () => ({ bridgeConfigured: bridge.configured, bridgeReachable: bridge.configured && (await bridge.ping()), knownDevices: registry.files().length });
+  const capabilityState = async () => ({ bridgeReachable: await bridge.ping(), knownDevices: registry.files().length, amxdVia: registry.via });
 
   server.registerResource("set", "live://set", { description: "The open Live set: tracks, devices, addresses", mimeType: "application/json" }, async (uri) => ({
     contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(overview(), bigintSafe) }],
@@ -343,8 +343,13 @@ export function createServer(deps: ServerDeps): McpServer {
       const t = live.track(track);
       const clips = live.clips(t, track);
       const arrangement = live.arrangementClips(t, track);
-      if (!bridge.configured) return { track, name: t.name, clips, arrangement, note: "playing state needs the LiveRemote bridge" };
-      const state = await bridge.call<{ index: number; is_playing: boolean; is_triggered: boolean; is_recording: boolean }[]>("clips", [bridgeTrackIndex(live, track)]);
+      let state: { index: number; is_playing: boolean; is_triggered: boolean; is_recording: boolean }[];
+      try {
+        state = await bridge.call("clips", [bridgeTrackIndex(live, track)]);
+      } catch (e) {
+        if (!(e instanceof BridgeError)) throw e;
+        return { track, name: t.name, clips, arrangement, note: "playing state needs the LiveRemote bridge: " + e.message };
+      }
       const byIndex = new Map(state.map((s) => [s.index, s]));
       const stateOf = (slot: number | undefined) => (slot === undefined ? undefined : byIndex.get(slot));
       return {

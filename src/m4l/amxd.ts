@@ -41,7 +41,11 @@ export function unitForStyle(style: number, custom?: string): string | undefined
 
 /** The patcher JSON of an .amxd file, frozen or not. */
 export function readPatcherJson(file: string): { json: unknown; frozen: boolean } {
-  const raw = fs.readFileSync(file);
+  return patcherJsonOf(fs.readFileSync(file), file);
+}
+
+/** The patcher JSON from the bytes of an .amxd file; `file` only names it in errors. */
+export function patcherJsonOf(raw: Buffer, file: string): { json: unknown; frozen: boolean } {
   if (raw.length < 36 || raw.subarray(0, 4).toString("latin1") !== "ampf" || raw.subarray(24, 28).toString("latin1") !== "ptch") {
     throw new Error(`${file}: not an .amxd file`);
   }
@@ -117,8 +121,8 @@ export function liveOrder(all: M4lParameter[]): M4lParameter[] {
   return [deviceOn, ...visible];
 }
 
-export function readAmxd(file: string): M4lDevice {
-  const { json, frozen } = readPatcherJson(file);
+export function readAmxd(file: string, bytes?: Buffer): M4lDevice {
+  const { json, frozen } = bytes ? patcherJsonOf(bytes, file) : readPatcherJson(file);
   const all = parametersOf(json);
   return { file, frozen, all, parameters: liveOrder(all) };
 }

@@ -6,9 +6,6 @@ import { connectText, loadConfig, writeConnectFile } from "./config.js";
 import { LiveAdapter } from "./live/adapter.js";
 import { M4lRegistry } from "./m4l/registry.js";
 import { Bridge } from "./bridge/client.js";
-import { installRemoteScript } from "./bridge/install.js";
-import liveRemoteInit from "../remote/LiveRemote/__init__.py";
-import liveRemoteScript from "../remote/LiveRemote/LiveRemote.py";
 import { ChangeTracker } from "./live/changes.js";
 import { createServer } from "./mcp/server.js";
 import { startHttp } from "./mcp/transport.js";
@@ -28,8 +25,8 @@ export function activate(activation: ActivationContext) {
     const context = initialize(activation, "1.0.0");
     const live = new LiveAdapter(context);
     const config = loadConfig(context.environment.storageDirectory, log);
-    const registry = new M4lRegistry({ directories: config.amxdDirectories, log });
     const bridge = new Bridge(config.bridge);
+    const registry = new M4lRegistry({ directories: config.amxdDirectories, log, fallback: bridge.amxdSource() });
     const changes = new ChangeTracker(live);
     const installed = Boolean(context.environment.storageDirectory);
     const shownToken = !config.token ? "none (authentication off)" : installed ? config.token.slice(0, 4) + "…" + config.token.slice(-4) : config.token;
@@ -38,10 +35,10 @@ export function activate(activation: ActivationContext) {
     // The full connect command goes to the log only while developing; an installed extension logs into Live's log file, which users share.
     if (installed && connectFile) log(`connect a client with the lines in ${connectFile}`);
     else log(`connect a client with:\n${connectText(config)}`);
-    installRemoteScript(config.userLibrary, { "__init__.py": liveRemoteInit, "LiveRemote.py": liveRemoteScript }, VERSION, log);
     try {
       registry.scan(true);
-      log(`Max for Live devices known: ${registry.files().length} from ${config.amxdDirectories.join(", ")}${registry.errors.length ? `; errors: ${registry.errors.join("; ")}` : ""}`);
+      if (registry.via === "files") log(`Max for Live devices known: ${registry.files().length} from ${config.amxdDirectories.join(", ")}${registry.errors.length ? `; errors: ${registry.errors.join("; ")}` : ""}`);
+      else void registry.refresh().then(() => log(`Max for Live devices known through the bridge: ${registry.files().length}${registry.errors.length ? `; ${registry.errors.join("; ")}` : ""}`));
     } catch (e) {
       log("amxd scan failed:", String(e));
     }

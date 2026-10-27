@@ -1,14 +1,24 @@
 // registry.ts – knows the .amxd files on disk and recognises them in the set by their parameter fingerprint:
 // the short names Live reports, in Live's order, match exactly one file's liveOrder().
+// An installed extension may not read outside its own folder, so when the folders cannot be read directly the
+// registry asks the LiveRemote bridge to list and read the .amxd files instead, in the background.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { readAmxd, type M4lDevice } from "./amxd.js";
+
+/** Lists and reads .amxd files for the registry when it may not touch them itself (the LiveRemote bridge). */
+export interface AmxdSource {
+  list(directories: string[]): Promise<{ file: string; mtime: number }[]>;
+  read(file: string): Promise<Buffer>;
+}
 
 export interface RegistryOptions {
   directories: string[];
   maxDepth?: number;
   maxFiles?: number;
   log?: (...a: unknown[]) => void;
+  /** used once reading the folders directly turns out to be forbidden */
+  fallback?: AmxdSource;
 }
 
 interface Entry {
@@ -17,19 +27,32 @@ interface Entry {
   fingerprint: string;
 }
 
+const RESCAN_MS = 60_000;
+
 export class M4lRegistry {
   private entries = new Map<string, Entry>();
   private scannedAt = 0;
+  private refreshing?: Promise<void>;
+  /** "files" reads the folders directly; "bridge" goes through options.fallback */
+  via: "files" | "bridge" = "files";
   readonly errors: string[] = [];
 
   constructor(readonly options: RegistryOptions) {}
 
-  /** Rescans at most once a minute (it runs on the host's event loop); cheap when nothing changed (stat per file). */
+  /**
+   * Rescans at most once a minute (it runs on the host's event loop); cheap when nothing changed (stat per file).
+   * Through the bridge the rescan runs in the background and its result is used from the next call on.
+   */
   scan(force = false): void {
     const now = Date.now();
-    if (!force && now - this.scannedAt < 60_000) return;
+    if (!force && now - this.scannedAt < RESCAN_MS) return;
     this.scannedAt = now;
+    if (this.via === "bridge") {
+      void this.refresh();
+      return;
+    }
     this.errors.length = 0;
+    let forbidden = false;
     const seen = new Set<string>();
     let count = 0;
     const maxFiles = this.options.maxFiles ?? 500;
@@ -39,7 +62,8 @@ export class M4lRegistry {
       try {
         names = fs.readdirSync(dir, { withFileTypes: true });
       } catch (e) {
-        this.errors.push(`${dir}: ${(e as Error).message}`);
+        if (isForbidden(e)) forbidden = true;
+        else this.errors.push(`${dir}: ${(e as Error).message}`);
         return;
       }
       for (const d of names) {
@@ -54,7 +78,42 @@ export class M4lRegistry {
       }
     };
     for (const dir of this.options.directories) walk(dir, 0);
+    if (forbidden && this.options.fallback) {
+      this.via = "bridge";
+      this.options.log?.("Live does not let this extension read the Max for Live folders; asking the LiveRemote bridge instead");
+      void this.refresh();
+      return;
+    }
+    if (forbidden) this.errors.push("Live does not let this extension read the Max for Live folders");
     for (const key of this.entries.keys()) if (!seen.has(key)) this.entries.delete(key);
+  }
+
+  /** Lists and reads the files through the bridge; one refresh at a time. Resolves when it is done. */
+  refresh(): Promise<void> {
+    const source = this.options.fallback;
+    if (!source) return Promise.resolve();
+    this.refreshing ??= (async () => {
+      const errors: string[] = [];
+      try {
+        const listed = await source.list(this.options.directories);
+        const seen = new Set(listed.map((f) => f.file));
+        for (const { file, mtime } of listed.slice(0, this.options.maxFiles ?? 500)) {
+          const have = this.entries.get(file);
+          if (have && have.mtimeMs === mtime) continue;
+          try {
+            this.put(file, mtime, readAmxd(file, await source.read(file)));
+          } catch (e) {
+            this.entries.delete(file);
+            errors.push(`${file}: ${(e as Error).message}`);
+          }
+        }
+        for (const key of this.entries.keys()) if (!seen.has(key)) this.entries.delete(key);
+      } catch (e) {
+        errors.push(`Max for Live files through the bridge: ${(e as Error).message}`);
+      }
+      this.errors.splice(0, this.errors.length, ...errors);
+    })().finally(() => (this.refreshing = undefined));
+    return this.refreshing;
   }
 
   private load(file: string) {
@@ -67,12 +126,15 @@ export class M4lRegistry {
     const have = this.entries.get(file);
     if (have && have.mtimeMs === mtimeMs) return;
     try {
-      const device = readAmxd(file);
-      this.entries.set(file, { device, mtimeMs, fingerprint: fingerprint(device.parameters.map((p) => p.shortName)) });
+      this.put(file, mtimeMs, readAmxd(file));
     } catch (e) {
       this.entries.delete(file);
       this.errors.push(`${file}: ${(e as Error).message}`);
     }
+  }
+
+  private put(file: string, mtimeMs: number, device: M4lDevice) {
+    this.entries.set(file, { device, mtimeMs, fingerprint: fingerprint(device.parameters.map((p) => p.shortName)) });
   }
 
   /**
@@ -97,6 +159,12 @@ export class M4lRegistry {
     this.scan();
     return [...this.entries.values()].map((e) => ({ file: e.device.file, parameters: e.device.parameters.length, frozen: e.device.frozen }));
   }
+}
+
+/** Node's permission model, which Live applies to installed extensions, refuses with ERR_ACCESS_DENIED. */
+function isForbidden(e: unknown): boolean {
+  const err = e as NodeJS.ErrnoException;
+  return err?.code === "ERR_ACCESS_DENIED" || /Access to this API has been restricted/.test(String(err?.message));
 }
 
 function fingerprint(names: string[]): string {
