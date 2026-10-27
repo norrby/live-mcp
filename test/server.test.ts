@@ -50,6 +50,19 @@ const call = async (c: Client, name: string, args: Record<string, unknown> = {})
   return { ok: !r.isError, data: r.isError ? text(r) : JSON.parse(text(r)) };
 };
 
+test("every tool carries hints, deletes are marked destructive, and the client gets instructions", async () => {
+  const c = await client();
+  const { tools } = await c.listTools();
+  for (const t of tools) assert.ok(t.annotations?.title && t.annotations.readOnlyHint !== undefined, `${t.name} has annotations`);
+  const by = Object.fromEntries(tools.map((t) => [t.name, t.annotations]));
+  assert.equal(by.get_set?.readOnlyHint, true);
+  assert.equal(by.delete_track?.destructiveHint, true);
+  assert.equal(by.set_parameters?.destructiveHint, false);
+  assert.equal(by.set_parameters?.idempotentHint, true);
+  assert.match(c.getInstructions() ?? "", /m4l.about/);
+  await c.close();
+});
+
 test("lists tools and reads the set", async () => {
   const c = await client();
   const tools = (await c.listTools()).tools.map((t) => t.name);

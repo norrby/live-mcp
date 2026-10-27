@@ -11,6 +11,30 @@ import type { M4lDevice, M4lParameter } from "../m4l/amxd.js";
 import { Device, Track } from "@ableton-extensions/sdk";
 import { Bridge, BridgeError } from "../bridge/client.js";
 import { capabilities } from "./capabilities.js";
+import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
+
+/** Sent to every client on connect: how to work with Live through this server, in a few rules. */
+export const INSTRUCTIONS = [
+  "Live MCP reads and changes the Ableton Live set that is open right now. Work like this:",
+  "- Start with get_set. Addresses (t0, t0/d1, t0/d1/p3, t0/s0, t0/a0) are positions and shift when things move; keep the #id a create answers with.",
+  "- Before driving a Max for Live device, read list_parameters: m4l.about is its author's own instructions, follow them. Parameters under m4l.askFirst change only when the user asked for that very action; never set userAsked on your own.",
+  "- When one parameter decides what others edit (a step, page or mode selector), set it in a call of its own first.",
+  "- Each call is one undo step, so put related changes in one call. Live's undo (Cmd/Ctrl+Z) takes back a whole call.",
+  "- A track that has played a session clip ignores its arrangement clips until transport back_to_arrangement.",
+  "- Live sends no events: get_changes tells what the user changed since you last looked.",
+  "- get_capabilities says what works now, what needs the LiveRemote bridge, and what no API in Live allows. When something cannot be done, tell the user instead of working around it.",
+].join("\n");
+
+const READ_ONLY = new Set(["get_set", "get_capabilities", "list_parameters", "find_parameters", "get_parameters", "get_changes", "browse", "get_scenes", "get_clips", "get_notes", "get_routing", "get_device_routing", "get_clip_automation", "render_audio"]);
+const DESTRUCTIVE = new Set(["delete_device", "delete_track", "delete_clip", "set_notes", "clear_clip_automation"]);
+const IDEMPOTENT = new Set(["set_parameters", "set_parameter_display", "set_track", "set_tempo", "set_clip", "set_notes", "set_routing", "set_device_routing", "set_clip_automation", "clear_clip_automation"]);
+
+/** MCP hints for a tool, from its name: what it reads, what it may destroy, whether repeating it changes anything. */
+export function annotationsFor(name: string): ToolAnnotations {
+  const title = name.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+  if (READ_ONLY.has(name)) return { title, readOnlyHint: true, openWorldHint: false };
+  return { title, readOnlyHint: false, destructiveHint: DESTRUCTIVE.has(name), idempotentHint: IDEMPOTENT.has(name), openWorldHint: false };
+}
 
 export interface ServerDeps {
   live: LiveAdapter;
@@ -48,7 +72,14 @@ const note = z.object({
 
 export function createServer(deps: ServerDeps): McpServer {
   const { live, registry, bridge, changes } = deps;
-  const server = new McpServer({ name: "live-mcp", version: deps.version }, { capabilities: { tools: { listChanged: false }, resources: { listChanged: false } } });
+  const server = new McpServer(
+    { name: "live-mcp", version: deps.version },
+    { capabilities: { tools: { listChanged: false }, resources: { listChanged: false } }, instructions: INSTRUCTIONS },
+  );
+  // Every tool gets its title and hints from annotationsFor, so none can be registered without them.
+  const register = server.registerTool.bind(server);
+  (server as unknown as { registerTool: unknown }).registerTool = (name: string, config: { annotations?: ToolAnnotations }, cb: unknown) =>
+    register(name, { ...config, annotations: { ...annotationsFor(name), ...config.annotations } } as never, cb as never);
 
   const m4lFor = (deviceAddress: string): M4lDevice | undefined => registry.match(live.device(deviceAddress).parameters.map((p) => p.name));
 
