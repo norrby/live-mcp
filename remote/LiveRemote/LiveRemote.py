@@ -377,8 +377,8 @@ class LiveRemote(ControlSurface):
         out = []
         for e in envelope.events_in_range(0.0, float(end)):
             cc = getattr(e, "control_coefficients", None)
-            curve = (cc.x1, cc.y1, cc.x2, cc.y2) if cc is not None else ()
-            out.append([e.time, e.value] + list(curve) if any(curve) else [e.time, e.value])
+            curve = (cc.x1, cc.y1, cc.x2, cc.y2) if cc is not None else (0.5, 0.5, 0.5, 0.5)
+            out.append([e.time, e.value] if curve == (0.5, 0.5, 0.5, 0.5) else [e.time, e.value] + list(curve))  # all 0.5: straight
         return out
 
     def cmd_clip_envelopes(self, track, slot):
@@ -408,7 +408,8 @@ class LiveRemote(ControlSurface):
                 env = None
             if env is None:
                 env = clip.create_automation_envelope(param)
-            for ev in events:
+            # Live keeps an event's curve only if a later event exists when it is created, so write the last one first.
+            for ev in sorted(events, key=lambda e: -float(e[0])):
                 time, value = float(ev[0]), float(ev[1])
                 if len(ev) >= 6:
                     cc = Live.Envelope.EnvelopeEventControlCoefficients(float(ev[2]), float(ev[3]), float(ev[4]), float(ev[5]))
