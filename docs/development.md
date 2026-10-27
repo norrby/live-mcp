@@ -79,9 +79,13 @@ the project through Live before a clip is made from them.
 | Group | Tools |
 |---|---|
 | Reading | `get_set`, `get_capabilities`, `list_parameters`, `find_parameters`, `get_parameters`, `get_changes` |
-| Writing | `set_parameters`, `set_track`, `set_tempo`, `insert_device`, `delete_device`, `create_track`, `delete_track` |
-| Clips | `get_clips`, `create_clip`, `create_audio_clip`, `get_notes`, `set_notes`, `set_clip`, `delete_clip` |
-| Through the bridge | `set_parameter_display`, `browse`, `load_browser_item`, `transport`, `selection`, `get_scenes`, `fire`, `undo`, `redo`, `get_routing`, `set_routing`, `get_device_routing`, `set_device_routing` |
+| Writing | `set_parameters`, `set_track`, `set_tempo`, `insert_device`, `delete_device`, `create_track`, `delete_track` (the deletes take lists, one undo step) |
+| Clips | `get_clips`, `create_clip`, `create_audio_clip`, `import_midi_file`, `get_notes`, `set_notes`, `set_clip`, `delete_clip` |
+| Listening | `measure_audio` (peak, RMS, LUFS, clipping, silence of an audio track's range) |
+| Through the bridge | `set_parameter_display`, `browse`, `load_browser_item`, `transport`, `selection`, `get_scenes`, `fire`, `undo`, `redo`, `get_routing`, `set_routing`, `get_device_routing`, `set_device_routing`, `get_clip_automation`, `set_clip_automation`, `clear_clip_automation` |
+
+Every tool carries MCP annotations (read-only, destructive, idempotent) and a title, and the server sends a short
+guide as its instructions when a client connects.
 
 Resources: `live://set` and `live://capabilities`.
 

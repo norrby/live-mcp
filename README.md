@@ -52,7 +52,10 @@ Ask your assistant *"Can you reach the LiveRemote bridge?"* to check.
 - *"Double the velocity of every note in that clip, and mute it."*
 - *"Add a Reverb to the vocals and a Utility after it."*
 - *"What did I change since you last looked?"*
+- *"Put the bass line from bassline.mid in my User Library on the bass track, at bar 9."*
+- *"Is the vocal track clipping anywhere in the chorus, and how loud is it?"*
 - *"Load my preset called Warm Pad on a new MIDI track."* (needs LiveRemote)
+- *"In that clip, let the filter open slowly over four bars and close again."* (needs LiveRemote)
 
 ## How it works
 
@@ -73,13 +76,19 @@ The boxes with a thick border are inside Live.
 
 ## Good to know
 
-- **Undo works.** Everything the assistant changes goes into Live's undo history, like your own edits.
+- **Undo works.** Everything the assistant changes goes into Live's undo history, like your own edits, and one
+  request is one undo step.
+- **See what is going on.** Right-click a track or a scene and choose **Live MCP status…**: whether the assistant
+  is connected, whether LiveRemote answers, the commands to connect, and a switch for a password.
 - **Only your computer can reach it.** Other computers and web pages cannot. If you want a password on top, see
   [docs/development.md](docs/development.md#configuration).
-- **Some things are out of reach** for any add-on in Live today: automation, recording, freezing, and the
-  MIDI To and Audio From of an External Instrument. For the last one, set them once yourself, save the device as a
+- **Some things are out of reach** for any add-on in Live today: automation in the arrangement (automation in
+  session clips works), recording, freezing, and the MIDI To and Audio From of an External Instrument. For the last one, set them once yourself, save the device as a
   preset, and ask the assistant to load that preset.
 - **Ask it what it can do.** The assistant can ask Live MCP itself, and gets an honest answer for your setup.
+- **Max for Live devices can explain themselves.** Live MCP reads a device's own help texts and description and
+  passes them to the assistant, and a device can mark controls the assistant may only touch when you ask. See
+  [For Max for Live authors](docs/development.md#for-max-for-live-authors).
 
 Not affiliated with or endorsed by Ableton. Use at your own risk.
 
