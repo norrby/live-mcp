@@ -184,8 +184,8 @@ export class FakeLive {
         slot.clip = id;
         ok(h(id));
       },
-      clipslotCreateAudioClip: (s: Handle, args: { filePath: string }, ok: (x: Handle) => void) => {
-        const id = self.add("AudioClip", s.id, { name: args.filePath.split("/").pop(), duration: 4, looping: false, muted: false, file: args.filePath, start: 0 });
+      clipslotCreateAudioClip: (s: Handle, args: { filePath: string; isWarped?: boolean }, ok: (x: Handle) => void) => {
+        const id = self.add("AudioClip", s.id, { name: args.filePath.split("/").pop(), duration: 4, looping: false, muted: false, file: args.filePath, start: 0, warped: args.isWarped });
         self.get(s.id).clip = id;
         ok(h(id));
       },
@@ -196,6 +196,7 @@ export class FakeLive {
         ok();
       },
       audioclipGetFilePath: (c: Handle) => self.get(c.id).file,
+      audioclipGetWarping: (c: Handle) => self.get(c.id).warped !== false,
       trackGetArrangementClips: (t: Handle) => self.handles(self.get(t.id).arrangement as Id[]),
       trackCreateMidiClip: (t: Handle, start: number, duration: number, ok: (x: Handle) => void) => {
         const id = self.add("MidiClip", t.id, { name: "", duration, looping: false, muted: false, notes: [], start });

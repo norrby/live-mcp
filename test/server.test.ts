@@ -248,6 +248,13 @@ test("clips: create in a slot and in the arrangement, notes in one undo step, re
   const audio = (await call(c, "create_audio_clip", { track: "t1", slot: 1, file: "/samples/kick.wav" })).data;
   assert.equal(audio.kind, "audio");
   assert.equal(audio.file, "/project/Samples/Imported/kick.wav", "the clip plays Live's imported copy");
+  assert.equal(audio.warped, true);
+  const plain = (await call(c, "create_audio_clip", { track: "t1", slot: 0, file: "/samples/pad.wav", warped: false })).data;
+  const { tempo } = (await call(c, "get_set")).data;
+  assert.equal(plain.warped, false);
+  assert.equal(plain.lengthSeconds, 4, "an unwarped clip's markers are in seconds");
+  assert.equal(plain.length, (4 * tempo) / 60, "length stays in beats");
+  await call(c, "delete_clip", { clip: "t1/s0" });
   const missing = await call(c, "create_audio_clip", { track: "t1", start: 0, file: "/samples/missing.wav" });
   assert.equal(missing.ok, false);
   assert.match(missing.data, /Live could not import \/samples\/missing\.wav/);

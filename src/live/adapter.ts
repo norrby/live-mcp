@@ -43,8 +43,11 @@ export interface ClipInfo {
   slot?: number;
   name: string;
   kind: "midi" | "audio" | "clip";
-  /** beats between start and end marker */
+  /** beats between start and end marker; for an unwarped audio clip, what it spans at the current tempo */
   length: number;
+  /** audio clips: whether the clip follows the tempo; when not, its markers are in seconds */
+  warped?: boolean;
+  lengthSeconds?: number;
   /** arrangement clips: position in the arrangement, in beats */
   start?: number;
   end?: number;
@@ -329,7 +332,15 @@ export class LiveAdapter {
       info.loopEnd = c.loopEnd;
     }
     if (c instanceof MidiClip) info.notes = c.notes.length;
-    if (c instanceof AudioClip) info.file = c.filePath;
+    if (c instanceof AudioClip) {
+      info.file = c.filePath;
+      info.warped = c.warping;
+      if (!c.warping) {
+        // An unwarped clip's markers are in seconds; in the arrangement its span in beats is known exactly.
+        info.lengthSeconds = info.length;
+        info.length = c.parent instanceof ClipSlot ? (info.length * this.song.tempo) / 60 : c.endTime - c.startTime;
+      }
+    }
     return info;
   }
 
