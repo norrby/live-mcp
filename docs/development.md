@@ -22,7 +22,9 @@ npm run package     # minified build, then release/Live-MCP-<version>.ablx
 ```
 
 `npm run host` needs `EXTENSION_HOST_PATH` in `.env`: the path to the Extension Host module inside Live's
-application. It runs the extension from this folder, so after a change you rebuild and restart the host, not Live.
+application. Developer Mode makes Live leave the Extension Host to you, so with it on Live runs no installed
+extensions at all; turn it off to try an installed `.ablx`, and uninstall that again before `npm run host`, or the
+two compete for the port. It runs the extension from this folder, so after a change you rebuild and restart the host, not Live.
 The first start after the host was stopped can take half a minute; wait for `MCP listening` in its output.
 
 `tools/client.mjs` talks to the running server as an MCP client does:
