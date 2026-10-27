@@ -1,0 +1,29 @@
+{
+  "name": "live-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for Ableton Live, running inside Live as an extension",
+  "license": "MIT",
+  "private": true,
+  "main": "dist/extension.js",
+  "type": "commonjs",
+  "engines": { "node": ">=24.14.1" },
+  "scripts": {
+    "build": "tsc --noEmit && tsx build.mts --production",
+    "build:dev": "tsc --noEmit && tsx build.mts",
+    "test": "node --import tsx --test test/*.test.ts",
+    "host": "node tools/host.mjs",
+    "package": "npm run build && ableton-extensions-cli package && mkdir -p release && mv -f Live-MCP-*.ablx release/"
+  },
+  "dependencies": {
+    "@ableton-extensions/sdk": "file:vendor/ableton-extensions-sdk-1.0.0-beta.1.tgz",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@ableton-extensions/cli": "file:vendor/ableton-extensions-cli-1.0.0-beta.1.tgz",
+    "@types/node": "^24.1.0",
+    "esbuild": "0.28.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.9.3"
+  }
+}

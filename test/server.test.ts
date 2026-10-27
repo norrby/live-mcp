@@ -1,0 +1,248 @@
+// server.test.ts – the whole stack without Live: fake host -> SDK -> adapter -> MCP server -> node:http -> MCP client.
+import { test, before, after } from "node:test";
+import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import type { AddressInfo } from "node:net";
+import { initialize } from "@ableton-extensions/sdk";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { LiveAdapter } from "../src/live/adapter.js";
+import { M4lRegistry } from "../src/m4l/registry.js";
+import { Bridge } from "../src/bridge/client.js";
+import { createServer } from "../src/mcp/server.js";
+import { ChangeTracker } from "../src/live/changes.js";
+import { startHttp } from "../src/mcp/transport.js";
+import { smallSet, type FakeLive } from "./fake-host.js";
+import { LiveAdapter as Adapter } from "../src/live/adapter.js";
+
+let fake: FakeLive;
+let http: ReturnType<typeof startHttp>;
+let url: string;
+const token = "test-token-0123456789";
+const logs: string[] = [];
+
+before(async () => {
+  fake = smallSet();
+  const context = initialize(fake.activation(), "1.0.0");
+  const live = new LiveAdapter(context);
+  const registry = new M4lRegistry({ directories: [fs.mkdtempSync(path.join(os.tmpdir(), "live-mcp-"))] });
+  const bridge = new Bridge({ port: 1 }); // not configured: no token
+  const changes = new ChangeTracker(live); // long-lived, like in the extension
+  http = startHttp({ port: 0, token, log: (...a) => logs.push(a.join(" ")), makeServer: () => createServer({ live, registry, bridge, changes, version: "test", log: () => {} }) });
+  await new Promise((r) => http.once("listening", r));
+  url = `http://127.0.0.1:${(http.address() as AddressInfo).port}/mcp`;
+});
+after(() => http.close());
+
+async function client() {
+  const c = new Client({ name: "test", version: "0" });
+  await c.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { authorization: `Bearer ${token}` } } }));
+  return c;
+}
+const text = (r: unknown) => (r as { content: { text: string }[] }).content[0].text;
+const call = async (c: Client, name: string, args: Record<string, unknown> = {}) => {
+  const r = await c.callTool({ name, arguments: args });
+  return { ok: !r.isError, data: r.isError ? text(r) : JSON.parse(text(r)) };
+};
+
+test("lists tools and reads the set", async () => {
+  const c = await client();
+  const tools = (await c.listTools()).tools.map((t) => t.name);
+  assert.ok(tools.includes("get_set") && tools.includes("set_parameters") && tools.includes("transport") && tools.includes("load_browser_item"));
+  const set = await call(c, "get_set");
+  assert.ok(set.ok);
+  assert.equal(set.data.tempo, 120);
+  assert.deepEqual(set.data.tracks.map((t: { address: string }) => t.address), ["t0", "t1", "r0", "main"]);
+  assert.equal(set.data.tracks[0].devices[0].name, "QuadraDrei");
+  assert.equal(set.data.tracks[0].devices[0].parameters, 5);
+  assert.equal(set.data.tracks[1].devices[0].chains[0].devices[0].address, "t1/d0/c0/d0", "devices inside racks get chain addresses");
+  const intro = set.data.tracks[0].clips[0];
+  assert.deepEqual({ ...intro, id: undefined }, { address: "t0/s1", id: undefined, slot: 1, name: "Intro", kind: "midi", length: 8, looping: true, loopStart: 0, loopEnd: 8, muted: false, notes: 0 });
+  assert.equal(set.data.tracks[1].clips, undefined, "tracks without clips carry no clips field");
+  const clips = await call(c, "get_clips");
+  assert.deepEqual(clips.data.map((t: { track: string }) => t.track), ["t0"]);
+  assert.match((await call(c, "get_clips", { track: "t0" })).data.note, /bridge/);
+  await c.close();
+});
+
+test("lists and sets parameters; a batch is one transaction; bad values are reported per row", async () => {
+  const c = await client();
+  const list = await call(c, "list_parameters", { device: "t0/d0" });
+  assert.ok(list.ok);
+  assert.equal(list.data.parameters[2].name, "Cutoff");
+  assert.equal(list.data.parameters[2].value, 127);
+  assert.deepEqual(list.data.parameters[3].items, ["Lowp", "Band", "High"]);
+  const before = fake.transactions;
+  const set = await call(c, "set_parameters", { changes: [{ address: "t0/d0/p2", value: 64 }, { address: "t0/d0/p3", value: 2 }, { address: "t0/d0/p1", value: 999 }] });
+  assert.ok(set.ok);
+  assert.equal(set.data[0].after, 64);
+  assert.equal(set.data[1].after, 2);
+  assert.match(set.data[2].error, /rejected 999 for "A"; range 0..127/);
+  assert.equal(fake.transactions, before + 1, "one transaction for the batch");
+  assert.equal(fake.writesInTransaction[fake.writesInTransaction.length - 1], 3, "all writes started inside it");
+  const get = await call(c, "get_parameters", { addresses: ["t0/d0/p2", "t0/vol", "r0/vol"] });
+  assert.deepEqual(get.data.map((r: { value: number }) => r.value), [64, 0.85, 0.85]);
+  await c.close();
+});
+
+test("explains bad addresses and missing objects", async () => {
+  const c = await client();
+  assert.match((await call(c, "get_parameters", { addresses: ["t7/d0/p1"] })).data, /no track 7 \(there are 2\)/);
+  assert.match((await call(c, "list_parameters", { device: "t0/d0/p1" })).data, /not a device/);
+  assert.match((await call(c, "get_parameters", { addresses: ["x1"] })).data, /bad address segment "x1"/);
+  assert.match((await call(c, "set_parameters", { changes: [{ address: "t0/d0/p1", value: 1 }, { address: "t0/d0/p1", value: 2 }] })).data, /appears twice/);
+  await c.close();
+});
+
+test("inserts and deletes devices and tracks; stale handles are explained", async () => {
+  const c = await client();
+  const ins = await call(c, "insert_device", { into: "t1", device: "Reverb", index: 0 });
+  assert.ok(ins.ok);
+  assert.equal(ins.data.address, "t1/d0");
+  const id = ins.data.id;
+  assert.ok((await call(c, "list_parameters", { device: id })).ok, "device reachable by #id");
+  assert.match((await call(c, "insert_device", { into: "t1", device: "Nonsense" })).data, /error/);
+  assert.deepEqual((await call(c, "delete_device", { device: id })).data, { deleted: "Reverb" }, "delete by #id");
+  assert.match((await call(c, "list_parameters", { device: id })).data, /no longer exists/);
+  const tr = await call(c, "create_track", { kind: "audio", name: "Bus" });
+  assert.equal(tr.data.name, "Bus");
+  assert.deepEqual((await call(c, "delete_track", { track: tr.data.address })).data, { deleted: "Bus" });
+  await c.close();
+});
+
+test("get_changes: snapshot first, then a diff; scope limits to one track; devices in racks are watched", async () => {
+  const c = await client();
+  assert.equal((await call(c, "get_changes", { cursor: "x" })).data.first, true);
+  assert.equal((await call(c, "get_changes", { cursor: "y", scope: "t1" })).data.first, true);
+  await call(c, "set_parameters", { changes: [{ address: "t0/d0/p2", value: 5 }, { address: "t1/d0/c0/d0/p1", value: 0.9 }] });
+  const r = (await call(c, "get_changes", { cursor: "x" })).data;
+  assert.deepEqual(r.changes.map((ch: { address: string; to: number }) => [ch.address, ch.to]), [["t0/d0/p2", 5], ["t1/d0/c0/d0/p1", 0.9]]);
+  const scoped = (await call(c, "get_changes", { cursor: "y", scope: "t1" })).data;
+  assert.deepEqual(scoped.changes.map((ch: { address: string }) => ch.address), ["t1/d0/c0/d0/p1"]);
+  assert.match((await call(c, "get_changes", { cursor: "z", scope: "t0/d0" })).data, /not a track/);
+  await c.close();
+});
+
+test("delete_device and locateDevice work for a device inside a rack chain", async () => {
+  const c = await client();
+  const r = await call(c, "list_parameters", { device: "t1/d0/c0/d0", values: false });
+  assert.equal(r.data.name, "Saturator");
+  assert.match((await call(c, "transport")).data, /bridge not configured/);
+  await c.close();
+});
+
+test("bridge tools fail with an explanation when the bridge is not configured", async () => {
+  const c = await client();
+  const r = await call(c, "transport");
+  assert.equal(r.ok, false);
+  assert.match(r.data, /bridge not configured/);
+  const caps = await call(c, "get_capabilities");
+  assert.match(caps.data.viaBridge[0].available, /not configured/);
+  await c.close();
+});
+
+test("HTTP: token, origin, bad JSON, notifications only, GET", async () => {
+  const post = (body: string, headers: Record<string, string> = {}) => fetch(url, { method: "POST", headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${token}`, ...headers }, body });
+  assert.equal((await post("{}", { authorization: "Bearer wrong" })).status, 401);
+  assert.equal((await post("{}", { origin: "http://evil.example" })).status, 403);
+  assert.equal((await post("not json")).status, 400);
+  assert.equal((await post("null")).status, 400);
+  assert.equal((await post("[]")).status, 400);
+  assert.equal((await post(JSON.stringify({ foo: 1 }))).status, 400);
+  assert.equal((await fetch(url, { method: "DELETE", headers: { authorization: `Bearer ${token}` } })).status, 405);
+  assert.equal((await post(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }))).status, 202);
+  assert.equal((await fetch(url, { headers: { authorization: `Bearer ${token}` } })).status, 405);
+  const batch = await post(JSON.stringify([{ jsonrpc: "2.0", id: 1, method: "ping" }, { jsonrpc: "2.0", id: 2, method: "ping" }]));
+  assert.equal(batch.status, 200);
+  assert.equal(((await batch.json()) as unknown[]).length, 2);
+  assert.equal((await post(JSON.stringify([{ jsonrpc: "2.0", id: 1, method: "ping" }, { jsonrpc: "2.0", id: 1, method: "ping" }]))).status, 400, "duplicate ids");
+  assert.equal((await post(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping", params: 5 }))).status, 400, "params must be an object");
+  assert.equal((await fetch(url + "?x=1", { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify({ jsonrpc: "2.0", id: 9, method: "ping" }) })).status, 200, "query string ignored");
+});
+
+test("a request that Live never answers times out with a JSON-RPC error, keeping finished answers in a batch", async () => {
+  const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
+  const slow = startHttp({
+    port: 0,
+    requestTimeoutMs: 150,
+    makeServer: () => {
+      const s = new McpServer({ name: "slow", version: "0" });
+      s.registerTool("hang", { description: "never answers", inputSchema: {} }, () => new Promise(() => {}));
+      return s;
+    },
+  });
+  await new Promise((r) => slow.once("listening", r));
+  const slowUrl = `http://127.0.0.1:${(slow.address() as AddressInfo).port}/mcp`;
+  const body = [{ jsonrpc: "2.0", id: 1, method: "ping" }, { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "hang", arguments: {} } }];
+  const res = await fetch(slowUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  assert.equal(res.status, 200);
+  const answers = (await res.json()) as { id: number; result?: unknown; error?: { code: number } }[];
+  assert.deepEqual(answers.map((a) => [a.id, a.error?.code ?? "ok"]), [[1, "ok"], [2, -32000]]);
+  slow.close();
+});
+
+test("clips: create in a slot and in the arrangement, notes in one undo step, rename, delete", async () => {
+  const c = await client();
+  const before = fake.transactions;
+  const made = (await call(c, "create_clip", { track: "t0", slot: 0, length: 4, name: "Bass", notes: [{ pitch: 36, startTime: 0, duration: 1 }, { pitch: 43, startTime: 2, duration: 0.5, velocity: 80 }] })).data;
+  assert.equal(made.address, "t0/s0");
+  assert.equal(made.name, "Bass");
+  assert.equal(made.notes, 2);
+  assert.equal(made.length, 4);
+  assert.equal(fake.transactions, before + 2, "creating is one undo step in the SDK, name and notes together another");
+
+  const notes = (await call(c, "get_notes", { clip: "t0/s0" })).data;
+  assert.equal(notes.notes.length, 2);
+  assert.equal(notes.notes[0].velocity, 100);
+
+  const set = (await call(c, "set_notes", { clip: "t0/s0", notes: [{ pitch: 48, startTime: 0, duration: 4 }] })).data;
+  assert.equal(set.notes, 1);
+  assert.equal(fake.transactions, before + 3);
+
+  assert.match((await call(c, "create_clip", { track: "t0", slot: 0, length: 4 })).data, /already holds "Bass"/);
+  assert.match((await call(c, "create_clip", { track: "t1", slot: 0, length: 4 })).data, /not a MIDI track/);
+  assert.equal((await call(c, "get_notes", { clip: "t0/s1" })).data.clip, "t0/s1");
+
+  const arr = (await call(c, "create_clip", { track: "t0", start: 8, length: 2 })).data;
+  assert.equal(arr.address, "t0/a0");
+  const listed = (await call(c, "get_clips", { track: "t0" })).data;
+  assert.equal(listed.arrangement.length, 1);
+  assert.equal(listed.arrangement[0].start, 8);
+  assert.equal(listed.clips.length, 2);
+
+  const renamed = (await call(c, "set_clip", { clip: arr.id, name: "Fill", muted: true })).data;
+  assert.equal(renamed.name, "Fill");
+  assert.equal(renamed.muted, true);
+  assert.equal(renamed.address, "t0/a0");
+
+  const audio = (await call(c, "create_audio_clip", { track: "t1", slot: 1, file: "/samples/kick.wav" })).data;
+  assert.equal(audio.kind, "audio");
+  assert.equal(audio.file, "/samples/kick.wav");
+  assert.match((await call(c, "get_notes", { clip: "t1/s1" })).data, /audio clip/);
+
+  assert.equal((await call(c, "delete_clip", { clip: "t0/a0" })).data.deleted, "Fill");
+  assert.equal((await call(c, "delete_clip", { clip: "t0/s0" })).data.deleted, "Bass");
+  assert.match((await call(c, "get_notes", { clip: "t0/s0" })).data, /slot t0\/s0 is empty/);
+  await c.close();
+});
+
+test("without a token, local programs get in but anything with an Origin header is refused", async () => {
+  const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
+  const open = startHttp({ port: 0, makeServer: () => new McpServer({ name: "open", version: "0" }) });
+  await new Promise((r) => open.once("listening", r));
+  const openUrl = `http://127.0.0.1:${(open.address() as AddressInfo).port}/mcp`;
+  const ping = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" });
+  assert.equal((await fetch(openUrl, { method: "POST", headers: { "content-type": "application/json" }, body: ping })).status, 200);
+  assert.equal((await fetch(openUrl, { method: "POST", headers: { "content-type": "application/json", origin: "http://localhost:3000" }, body: ping })).status, 403);
+  open.close();
+});
+
+test("create_clip refuses slot and start together and an out-of-range slot", async () => {
+  const c = await client();
+  assert.match((await call(c, "create_clip", { track: "t0", slot: 0, start: 4, length: 4 })).data, /not both/);
+  assert.match((await call(c, "create_clip", { track: "t0", slot: 99, length: 4 })).data, /clip slot/);
+  assert.match((await call(c, "create_audio_clip", { track: "t1", slot: 0, file: "relative.wav" })).data, /absolute path/);
+  await c.close();
+});
