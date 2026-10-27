@@ -542,7 +542,7 @@ class LiveRemote(ControlSurface):
     # -- transport, selection, scenes and clips (for the live-mcp bridge; the Extensions SDK has none of these) --
     def cmd_transport(self, action=None):
         """Transport status, or run an action first: play | stop | continue | stop_all_clips | record_on | record_off |
-        metronome_on | metronome_off | loop_on | loop_off."""
+        metronome_on | metronome_off | loop_on | loop_off | back_to_arrangement."""
         song = self.song()
         if action is not None:
             action = str(action)
@@ -560,13 +560,17 @@ class LiveRemote(ControlSurface):
                 song.metronome = action == "metronome_on"
             elif action in ("loop_on", "loop_off"):
                 song.loop = action == "loop_on"
+            elif action == "back_to_arrangement":
+                # Like the Back to Arrangement button: tracks that a session clip took over play the arrangement again.
+                song.back_to_arranger = False
             else:
                 raise ValueError("unknown transport action %r" % action)
         return {"is_playing": song.is_playing, "record_mode": song.record_mode, "tempo": song.tempo,
                 "signature_numerator": song.signature_numerator, "signature_denominator": song.signature_denominator,
                 "current_song_time": song.current_song_time, "loop": song.loop, "loop_start": song.loop_start,
                 "loop_length": song.loop_length, "metronome": song.metronome,
-                "overdub": getattr(song, "overdub", None), "session_record": getattr(song, "session_record", None)}
+                "overdub": getattr(song, "overdub", None), "session_record": getattr(song, "session_record", None),
+                "arrangement_overridden": getattr(song, "back_to_arranger", None)}
 
     def cmd_selection(self, track=None, device=None, scene=None):
         """The selected track (index in tracks + returns + master), device on it and scene; set any of them first."""
