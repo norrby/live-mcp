@@ -1,6 +1,6 @@
 {
   "name": "live-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "MCP server for Ableton Live, running inside Live as an extension",
   "license": "MIT",
   "private": true,
@@ -12,7 +12,8 @@
     "build:dev": "tsc --noEmit && tsx build.mts",
     "test": "node --import tsx --test test/*.test.ts",
     "host": "node tools/host.mjs",
-    "package": "npm run build && ableton-extensions-cli package && mkdir -p release && mv -f Live-MCP-*.ablx release/"
+    "package": "npm run build && ableton-extensions-cli package && mkdir -p release && mv -f Live-MCP-*.ablx release/ && npm run package:bridge",
+    "package:bridge": "rm -f release/LiveRemote.zip && cd remote && zip -qr ../release/LiveRemote.zip LiveRemote -x '*/__pycache__/*' '*/.*'"
   },
   "dependencies": {
     "@ableton-extensions/sdk": "file:vendor/ableton-extensions-sdk-1.0.0-beta.1.tgz",
