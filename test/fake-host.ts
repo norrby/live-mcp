@@ -76,6 +76,11 @@ export class FakeLive {
     return id;
   }
   /** `holder` is a track or a chain */
+  /** The return tracks, for a test that adds a device where it shifts no other address. */
+  returnTracks(): Id[] {
+    return this.get(this.song).returnTracks as Id[];
+  }
+
   addDevice(holder: Id, name: string, params: FakeParam[], cls = "Device"): Id {
     const id = this.add(cls, holder, { name, params: [] as Id[], chains: [] as Id[] });
     const list = this.get(id).params as Id[];

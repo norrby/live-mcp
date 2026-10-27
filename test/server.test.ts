@@ -20,6 +20,8 @@ import { LiveAdapter as Adapter } from "../src/live/adapter.js";
 let fake: FakeLive;
 let http: ReturnType<typeof startHttp>;
 let url: string;
+let registry: M4lRegistry;
+let amxdDir: string;
 const token = "test-token-0123456789";
 const logs: string[] = [];
 
@@ -27,7 +29,8 @@ before(async () => {
   fake = smallSet();
   const context = initialize(fake.activation(), "1.0.0");
   const live = new LiveAdapter(context);
-  const registry = new M4lRegistry({ directories: [fs.mkdtempSync(path.join(os.tmpdir(), "live-mcp-"))] });
+  amxdDir = fs.mkdtempSync(path.join(os.tmpdir(), "live-mcp-"));
+  registry = new M4lRegistry({ directories: [amxdDir] });
   const bridge = new Bridge({ port: 1 }); // not configured: no token
   const changes = new ChangeTracker(live); // long-lived, like in the extension
   http = startHttp({ port: 0, token, log: (...a) => logs.push(a.join(" ")), makeServer: () => createServer({ live, registry, bridge, changes, version: "test", log: () => {} }) });
@@ -252,5 +255,38 @@ test("create_clip refuses slot and start together and an out-of-range slot", asy
   assert.match((await call(c, "create_clip", { track: "t0", slot: 0, start: 4, length: 4 })).data, /not both/);
   assert.match((await call(c, "create_clip", { track: "t0", slot: 99, length: 4 })).data, /clip slot/);
   assert.match((await call(c, "create_audio_clip", { track: "t1", slot: 0, file: "relative.wav" })).data, /absolute path/);
+  await c.close();
+});
+
+test("a parameter its author marked [ask first] is refused unless the user asked, and its default is always allowed", async () => {
+  const returnTrack = fake.returnTracks()[0];
+  fake.addDevice(returnTrack, "Guarded", [{ name: "Action", items: ["None", "Pull", "Push", "Store"], value: 0 }, { name: "Level", max: 127, value: 10 }]);
+  const valueof = (long: string, extra: Record<string, unknown>) => ({ box: { maxclass: "live.dial", saved_attribute_attributes: { valueof: { parameter_longname: long, parameter_shortname: long, ...extra } } } });
+  const patcher = { patcher: { boxes: [
+    { ...valueof("Action", { parameter_type: 2, parameter_enum: ["None", "Pull", "Push", "Store"] }), box: { ...valueof("Action", { parameter_type: 2, parameter_enum: ["None", "Pull", "Push", "Store"] }).box, annotation: "Presses Pull, Push or Store. [ask first]" } },
+    valueof("Level", { parameter_mmax: 127 }),
+  ] } };
+  const json = Buffer.from(JSON.stringify(patcher));
+  const head = Buffer.alloc(32);
+  head.write("ampf", 0, "latin1");
+  head.write("ptch", 24, "latin1");
+  fs.writeFileSync(path.join(amxdDir, "Guarded.amxd"), Buffer.concat([head, json]));
+  registry.scan(true);
+
+  const c = await client();
+  const list = (await call(c, "list_parameters", { device: "r0/d0" })).data;
+  assert.equal(list.parameters[1].help, "Presses Pull, Push or Store.", "the tag is not shown as part of the help");
+  assert.equal(list.parameters[1].askFirst, true);
+  assert.deepEqual(list.m4l.askFirst.parameters, ["r0/d0/p1 Action"]);
+
+  const refused = await call(c, "set_parameters", { changes: [{ address: "r0/d0/p2", value: 50 }, { address: "r0/d0/p1", value: 2 }] });
+  assert.equal(refused.ok, false);
+  assert.match(refused.data, /Nothing was changed.*Action \(r0\/d0\/p1\).*userAsked: true/s);
+  assert.equal((await call(c, "get_parameters", { addresses: ["r0/d0/p2"] })).data[0].value, 10, "the whole call is refused, not half done");
+
+  assert.ok((await call(c, "set_parameters", { changes: [{ address: "r0/d0/p1", value: 0 }] })).ok, "the default is always allowed");
+  const asked = await call(c, "set_parameters", { changes: [{ address: "r0/d0/p1", value: 2, userAsked: true }] });
+  assert.equal(asked.data[0].after, 2);
+  assert.match((await call(c, "set_parameter_display", { parameter: "r0/d0/p1", target: "Push" })).data, /Nothing was changed/);
   await c.close();
 });

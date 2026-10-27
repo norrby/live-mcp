@@ -65,6 +65,32 @@ export function createServer(deps: ServerDeps): McpServer {
   };
 
   const viaBridge = " Needs the LiveRemote bridge (see get_capabilities).";
+
+  /**
+   * A Max for Live author can mark a parameter "[ask first]" (a Pull, Push or Store action, say). Changing it to
+   * anything but its default needs userAsked: true; otherwise the whole call is refused, so nothing half happens.
+   * value undefined means any change (set_parameter_display), which is refused as well.
+   */
+  const refuseUnasked = (changes: { address: string; value?: number; userAsked?: boolean }[]) => {
+    const refused: string[] = [];
+    for (const c of changes) {
+      if (c.userAsked) continue;
+      const p = live.parameter(c.address);
+      const device = p.parent;
+      if (!(device instanceof Device)) continue;
+      const deviceAddress = live.id(device);
+      const index = device.parameters.indexOf(p);
+      const m = m4lFor(deviceAddress)?.parameters[index];
+      if (!m?.askFirst) continue;
+      const info = live.deviceParameters(deviceAddress)[index];
+      if (c.value !== undefined && c.value === info?.default) continue;
+      refused.push(`${m.longName} (${c.address})${m.help ? `: "${m.help}"` : ""}`);
+    }
+    if (refused.length)
+      throw new LiveError(
+        `Nothing was changed. The device's author marked ${refused.join("; ")} as changed only when the user asks. Do not choose it on your own: ask the user, and repeat the call with userAsked: true on that change only if they asked for it in so many words.`,
+      );
+  };
   const capabilityState = async () => ({ bridgeReachable: await bridge.ping(), knownDevices: registry.files().length, amxdVia: registry.via });
 
   server.registerResource("set", "live://set", { description: "The open Live set: tracks, devices, addresses", mimeType: "application/json" }, async (uri) => ({
@@ -122,7 +148,14 @@ export function createServer(deps: ServerDeps): McpServer {
       const out: Record<string, unknown> = { device, name: d.name };
       if (m4l) {
         const hidden = notInLive(m4l, device).filter((h) => matches(h.name) || h.seeInstead?.some(matches));
-        out.m4l = stripUndefined({ file: m4l.file, frozen: m4l.frozen, about: m4l.description, notInLive: hidden.length ? hidden : undefined });
+        const askFirst = m4l.parameters.flatMap((p, i) => (p.askFirst ? [`${device}/p${i} ${p.longName}`] : []));
+        out.m4l = stripUndefined({
+          file: m4l.file,
+          frozen: m4l.frozen,
+          about: m4l.description,
+          askFirst: askFirst.length ? { parameters: askFirst, rule: "change these only when the user asks for it; set_parameters refuses them otherwise" } : undefined,
+          notInLive: hidden.length ? hidden : undefined,
+        });
       }
       out.parameters = q ? rows.filter((r) => matches(r.name) || matches(r.longName)) : rows;
       return out;
@@ -196,10 +229,23 @@ export function createServer(deps: ServerDeps): McpServer {
   server.registerTool(
     "set_parameters",
     {
-      description: "Set one or more parameters in a single undo step. Values are in Live's internal units, within the min..max that list_parameters reports (quantized: the index of the choice). Returns before/after per parameter; a rejected value does not stop the others. All changes in one call start at the same time, in no guaranteed order: when one parameter decides what others mean (a step or page selector, a mode), set it in a call of its own first.",
-      inputSchema: { changes: z.array(z.object({ address, value: z.number() })).min(1) },
+      description: "Set one or more parameters in a single undo step. Values are in Live's internal units, within the min..max that list_parameters reports (quantized: the index of the choice). Returns before/after per parameter; a rejected value does not stop the others. All changes in one call start at the same time, in no guaranteed order: when one parameter decides what others mean (a step or page selector, a mode), set it in a call of its own first. A parameter its device's author marked askFirst is refused unless the user asked for that change and the change says userAsked: true.",
+      inputSchema: {
+        changes: z
+          .array(
+            z.object({
+              address,
+              value: z.number(),
+              userAsked: z.boolean().optional().describe("Only for a parameter marked askFirst: true when the user asked for this very change in so many words"),
+            }),
+          )
+          .min(1),
+      },
     },
-    guarded(({ changes }) => live.setValues(changes)),
+    guarded(({ changes }) => {
+      refuseUnasked(changes);
+      return live.setValues(changes.map(({ address, value }) => ({ address, value })));
+    }),
   );
 
   server.registerTool(
@@ -208,9 +254,14 @@ export function createServer(deps: ServerDeps): McpServer {
       description:
         'Set one parameter by the value as Live displays it: "-6 dB", "440 Hz", "250 ms", "50 %", "C3", or a choice name. Live finds the internal value for it (bisection inside Live). Returns the resulting display string and how far it is from the target.' +
         viaBridge,
-      inputSchema: { parameter: address.describe("A device parameter address (track/dN/pM)"), target: z.string().min(1) },
+      inputSchema: {
+        parameter: address.describe("A device parameter address (track/dN/pM)"),
+        target: z.string().min(1),
+        userAsked: z.boolean().optional().describe("Only for a parameter marked askFirst: true when the user asked for this very change"),
+      },
     },
-    guarded(({ parameter, target }) => {
+    guarded(({ parameter, target, userAsked }) => {
+      refuseUnasked([{ address: parameter, userAsked }]);
       const p = live.parameter(parameter);
       const device = p.parent;
       if (!(device instanceof Device)) throw new LiveError(`${parameter} is not a device parameter; mixer parameters (volume, pan, sends) are not reachable this way`);
@@ -564,5 +615,6 @@ function compactParam(p: ParameterInfo, m?: M4lParameter, help = true): Record<s
   if (m?.unit) out.unit = m.unit;
   if (p.items) out.items = p.items;
   if (help && m?.help) out.help = m.help;
+  if (m?.askFirst) out.askFirst = true;
   return out;
 }

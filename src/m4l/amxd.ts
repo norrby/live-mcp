@@ -20,6 +20,8 @@ export interface M4lParameter {
   /** 0 normal, 1 stored only (not in Live), 2 hidden (not in Live) */
   invisible: number;
   help?: string;
+  /** the author marked it "[ask first]" in its help text: change it only when the user asked for it */
+  askFirst?: boolean;
   helpName?: string;
 }
 
@@ -33,6 +35,9 @@ export interface M4lDevice {
   /** everything in the patcher, including the ones Live does not show */
   all: M4lParameter[];
 }
+
+/** The tag an author puts in a parameter's Info View text to say that a program may change it only on request. */
+export const ASK_FIRST = /\[ask first\]/gi;
 
 const UNIT_STYLES: Record<number, string | undefined> = { 0: undefined, 1: undefined, 2: "ms", 3: "Hz", 4: "dB", 5: "%", 6: "pan", 7: "st", 8: "note", 9: undefined, 10: undefined };
 
@@ -105,7 +110,12 @@ export function parametersOf(json: unknown): M4lParameter[] {
         if (unit) p.unit = unit;
         if (choices) p.choices = choices;
         if (Array.isArray(v.parameter_initial) && typeof v.parameter_initial[0] === "number") p.initial = v.parameter_initial[0];
-        if (box.annotation) p.help = box.annotation;
+        if (box.annotation) {
+          const tagged = ASK_FIRST.test(box.annotation);
+          const help = box.annotation.replace(ASK_FIRST, " ").replace(/\s+/g, " ").trim();
+          if (help) p.help = help;
+          if (tagged) p.askFirst = true;
+        }
         if (box.annotation_name) p.helpName = box.annotation_name;
         out.push(p);
       }
