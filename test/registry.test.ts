@@ -62,3 +62,32 @@ test("an unreachable bridge leaves an explanation instead of an exception", asyn
   await registry.refresh();
   assert.match(registry.errors[0], /through the bridge: LiveRemote is not reachable/);
 });
+
+test("a device's description and the visible parameters that reach its hidden controls", async () => {
+  const { readAmxd } = await import("../src/m4l/amxd.js");
+  const { notInLive } = await import("../src/mcp/server.js");
+  const json = {
+    patcher: {
+      description: "  Edit tables step by step.  ",
+      boxes: [
+        ["Osc 1 Table Data", "Data", 1],
+        ["Osc 1 Table Step", "Step", 0],
+        ["Osc 1 Table Wave", "Wave", 0],
+        ["Osc 1 Wave", "Osc 1", 0],
+        ["Panic", "Panic", 2],
+      ].map(([long, short, invisible]) => ({
+        box: { maxclass: "live.dial", saved_attribute_attributes: { valueof: { parameter_longname: long, parameter_shortname: short, parameter_invisible: invisible } } },
+      })),
+    },
+  };
+  const bytes = Buffer.from(JSON.stringify(json));
+  const head = Buffer.alloc(32);
+  head.write("ampf", 0, "latin1");
+  head.write("ptch", 24, "latin1");
+  const device = readAmxd("/lib/Synth.amxd", Buffer.concat([head, bytes]));
+  assert.equal(device.description, "Edit tables step by step.");
+  assert.deepEqual(notInLive(device, "t0/d0"), [
+    { name: "Osc 1 Table Data", seeInstead: ["t0/d0/p1 Osc 1 Table Step", "t0/d0/p2 Osc 1 Table Wave"] },
+    { name: "Panic" },
+  ]);
+});

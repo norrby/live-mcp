@@ -26,6 +26,8 @@ export interface M4lParameter {
 export interface M4lDevice {
   file: string;
   frozen: boolean;
+  /** the patcher's description (Patcher Inspector), where an author can say what the device is and how to drive it */
+  description?: string;
   /** parameters visible to Live, in Live's order; index 0 is Live's own "Device On" */
   parameters: M4lParameter[];
   /** everything in the patcher, including the ones Live does not show */
@@ -124,7 +126,10 @@ export function liveOrder(all: M4lParameter[]): M4lParameter[] {
 export function readAmxd(file: string, bytes?: Buffer): M4lDevice {
   const { json, frozen } = bytes ? patcherJsonOf(bytes, file) : readPatcherJson(file);
   const all = parametersOf(json);
-  return { file, frozen, all, parameters: liveOrder(all) };
+  const description = (json as { patcher?: { description?: unknown } }).patcher?.description;
+  const device: M4lDevice = { file, frozen, all, parameters: liveOrder(all) };
+  if (typeof description === "string" && description.trim()) device.description = description.trim();
+  return device;
 }
 
 function num(v: unknown, fallback: number): number {

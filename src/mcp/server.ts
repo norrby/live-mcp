@@ -95,7 +95,7 @@ export function createServer(deps: ServerDeps): McpServer {
     "list_parameters",
     {
       description:
-        "All parameters of a device: address, name, range, choices, current value. For recognised Max for Live devices also the long name, unit and help text. With display=true (needs the bridge) also the value as Live shows it, e.g. \"-12.0 dB\". Max for Live short names may repeat: address by index.",
+        "All parameters of a device: address, name, range, choices, current value. For recognised Max for Live devices also the long name, unit and help text, the device's own description (m4l.about: read it first, it is the author's word on how to drive the device), and the controls Live does not expose with the parameters that reach the same thing (m4l.notInLive). With display=true (needs the bridge) also the value as Live shows it, e.g. \"-12.0 dB\". Max for Live short names may repeat: address by index.",
       inputSchema: {
         device: address,
         values: z.boolean().default(true).describe("Include current values"),
@@ -116,7 +116,7 @@ export function createServer(deps: ServerDeps): McpServer {
         for (const s of strs) if (rows[s.index]) rows[s.index].display = s.str;
       }
       const out: Record<string, unknown> = { device, name: d.name };
-      if (m4l) out.m4l = { file: m4l.file, frozen: m4l.frozen, notInLive: hiddenNames(m4l) };
+      if (m4l) out.m4l = stripUndefined({ file: m4l.file, frozen: m4l.frozen, about: m4l.description, notInLive: notInLive(m4l, device) });
       out.parameters = rows;
       return out;
     }),
@@ -157,7 +157,9 @@ export function createServer(deps: ServerDeps): McpServer {
         const devices = device ? [device] : live.tracks().flatMap((t) => t.devices.map((d) => d.address));
         for (const a of devices) {
           const m = m4lFor(a);
-          if (m) for (const name of hiddenNames(m)) if (name.toLowerCase().includes(q)) hidden.push(`${name} (in ${live.device(a).name}, ${a})`);
+          if (m)
+            for (const h of notInLive(m, a))
+              if (h.name.toLowerCase().includes(q)) hidden.push(`${h.name} (in ${live.device(a).name}, ${a})${h.seeInstead ? `, reached instead through ${h.seeInstead.join(", ")}` : ""}`);
         }
         if (hidden.length) out.note = `no parameter in Live matches, but the Max for Live device has these controls that Live does not expose (buttons and stored data cannot be reached through any API): ${hidden.join("; ")}`;
       }
@@ -190,7 +192,7 @@ export function createServer(deps: ServerDeps): McpServer {
   server.registerTool(
     "set_parameters",
     {
-      description: "Set one or more parameters in a single undo step. Values are in Live's internal units, within the min..max that list_parameters reports (quantized: the index of the choice). Returns before/after per parameter; a rejected value does not stop the others.",
+      description: "Set one or more parameters in a single undo step. Values are in Live's internal units, within the min..max that list_parameters reports (quantized: the index of the choice). Returns before/after per parameter; a rejected value does not stop the others. All changes in one call start at the same time, in no guaranteed order: when one parameter decides what others mean (a step or page selector, a mode), set it in a call of its own first.",
       inputSchema: { changes: z.array(z.object({ address, value: z.number() })).min(1) },
     },
     guarded(({ changes }) => live.setValues(changes)),
@@ -527,9 +529,22 @@ function bridgeDeviceArgs(live: LiveAdapter, device: string): [number, number] {
   return [bridgeTrackIndex(live, live.id(holder)), index];
 }
 
-/** Controls a Max for Live device keeps away from Live: hidden buttons (invisible 2) and stored-only data (invisible 1). */
-function hiddenNames(m: M4lDevice): string[] {
-  return m.all.filter((p) => p.invisible !== 0).map((p) => p.longName);
+/**
+ * Controls a Max for Live device keeps away from Live: hidden buttons (invisible 2) and stored-only data (invisible 1).
+ * No API reaches them, but a device often edits the same thing through visible parameters named alike ("Osc 1 Table
+ * Data" is edited through "Osc 1 Table Step", "Osc 1 Table Wave" …), so those are listed as seeInstead.
+ */
+export function notInLive(m: M4lDevice, deviceAddress: string): { name: string; seeInstead?: string[] }[] {
+  return m.all
+    .filter((p) => p.invisible !== 0)
+    .map((p) => {
+      const words = p.longName.split(" ");
+      const prefix = words.slice(0, -1).join(" ");
+      const related = words.length > 1 && prefix.length >= 3
+        ? m.parameters.flatMap((q, i) => (q.longName.startsWith(prefix + " ") ? [`${deviceAddress}/p${i} ${q.longName}`] : []))
+        : [];
+      return related.length ? { name: p.longName, seeInstead: related } : { name: p.longName };
+    });
 }
 
 function stripUndefined<T extends Record<string, unknown>>(obj: T): Record<string, unknown> {
