@@ -36,6 +36,8 @@ export class M4lRegistry {
   private refreshing?: Promise<void>;
   /** "files" reads the folders directly; "bridge" goes through options.fallback */
   via: "files" | "bridge" = "files";
+  /** through the bridge: every listed file has arrived (or was found unreadable), so the registry knows what it can */
+  loaded = false;
   readonly errors: string[] = [];
 
   constructor(readonly options: RegistryOptions) {}
@@ -101,14 +103,16 @@ export class M4lRegistry {
         for (const { file, mtime } of listed.slice(0, this.options.maxFiles ?? 500)) {
           const have = this.entries.get(file);
           if (have && have.mtimeMs === mtime) continue;
+          const bytes = await source.read(file); // a bridge failure here ends the refresh as unfinished
           try {
-            this.put(file, mtime, readAmxd(file, await source.read(file)));
+            this.put(file, mtime, readAmxd(file, bytes));
           } catch (e) {
             this.entries.delete(file);
             errors.push(`${file}: ${(e as Error).message}`);
           }
         }
         for (const key of this.entries.keys()) if (!seen.has(key)) this.entries.delete(key);
+        this.loaded = true;
       } catch (e) {
         errors.push(`Max for Live files through the bridge: ${(e as Error).message}`);
         // The bridge was not there (Live still starting, say): try again soon rather than in a minute.
@@ -117,6 +121,12 @@ export class M4lRegistry {
       this.errors.splice(0, this.errors.length, ...errors);
     })().finally(() => (this.refreshing = undefined));
     return this.refreshing;
+  }
+
+  /** Resolves once the registry knows the devices it can know: at once when it reads files itself or has loaded. */
+  ready(): Promise<void> {
+    if (this.via === "files" || this.loaded) return Promise.resolve();
+    return this.refresh();
   }
 
   private load(file: string) {

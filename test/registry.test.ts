@@ -38,7 +38,9 @@ test("when Live forbids reading the folders, the registry reads the .amxd files 
     syncBuiltinESMExports();
   }
   assert.equal(registry.via, "bridge");
-  await registry.refresh();
+  assert.equal(registry.loaded, false);
+  await registry.ready();
+  assert.equal(registry.loaded, true, "ready waits for the files to arrive");
   const m = registry.match(["Device On", "Freq", "Res"]);
   assert.equal(m?.parameters[1].longName, "Cutoff Frequency");
   assert.equal(registry.errors.length, 0);

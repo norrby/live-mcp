@@ -71,7 +71,10 @@ export function createServer(deps: ServerDeps): McpServer {
    * anything but its default needs userAsked: true; otherwise the whole call is refused, so nothing half happens.
    * value undefined means any change (set_parameter_display), which is refused as well.
    */
-  const refuseUnasked = (changes: { address: string; value?: number; userAsked?: boolean }[]) => {
+  const refuseUnasked = async (changes: { address: string; value?: number; userAsked?: boolean }[]) => {
+    // Until the .amxd files have arrived through the bridge the marks are unknown; wait for them rather than let a
+    // marked parameter through in the first seconds after Live starts.
+    await registry.ready();
     const refused: string[] = [];
     for (const c of changes) {
       if (c.userAsked) continue;
@@ -242,8 +245,8 @@ export function createServer(deps: ServerDeps): McpServer {
           .min(1),
       },
     },
-    guarded(({ changes }) => {
-      refuseUnasked(changes);
+    guarded(async ({ changes }) => {
+      await refuseUnasked(changes);
       return live.setValues(changes.map(({ address, value }) => ({ address, value })));
     }),
   );
@@ -260,8 +263,8 @@ export function createServer(deps: ServerDeps): McpServer {
         userAsked: z.boolean().optional().describe("Only for a parameter marked askFirst: true when the user asked for this very change"),
       },
     },
-    guarded(({ parameter, target, userAsked }) => {
-      refuseUnasked([{ address: parameter, userAsked }]);
+    guarded(async ({ parameter, target, userAsked }) => {
+      await refuseUnasked([{ address: parameter, userAsked }]);
       const p = live.parameter(parameter);
       const device = p.parent;
       if (!(device instanceof Device)) throw new LiveError(`${parameter} is not a device parameter; mixer parameters (volume, pan, sends) are not reachable this way`);
