@@ -303,3 +303,20 @@ test("a parameter its author marked [ask first] is refused unless the user asked
   assert.match((await call(c, "set_parameter_display", { parameter: "r0/d0/p1", target: "Push" })).data, /Nothing was changed/);
   await c.close();
 });
+
+test("several clips are deleted in one undo step, and one wrong address deletes nothing", async () => {
+  const c = await client();
+  const a = (await call(c, "create_clip", { track: "t0", slot: 0, length: 4, name: "A" })).data;
+  const b = (await call(c, "create_clip", { track: "t0", start: 32, length: 4, name: "B" })).data;
+  const before = fake.transactions;
+  const deleted = await call(c, "delete_clip", { clips: [a.address, b.id] });
+  assert.deepEqual(deleted.data.deleted, ["A", "B"]);
+  assert.equal(fake.transactions - before, 1, "one undo step for both");
+
+  const refused = await call(c, "delete_clip", { clips: ["t0/s1", "t0/s0"] });
+  assert.equal(refused.ok, false);
+  assert.match(refused.data, /empty/);
+  assert.equal((await call(c, "get_clips", { track: "t0" })).data.clips.find((x: { slot: number }) => x.slot === 1)?.name, "Intro", "nothing was deleted");
+  assert.match((await call(c, "delete_clip", {})).data, /give clip or clips/);
+  await c.close();
+});

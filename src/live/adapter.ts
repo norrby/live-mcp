@@ -332,6 +332,16 @@ export class LiveAdapter {
     return name;
   }
 
+  /** Deletes several clips as one undo step; every address is resolved first, so a wrong one deletes nothing. */
+  async deleteClips(addresses: string[]): Promise<string[]> {
+    const found = addresses.map((a) => this.locateClip(a));
+    const ids = new Set<string>();
+    const distinct = found.filter((f) => !ids.has(this.id(f.clip)) && ids.add(this.id(f.clip)));
+    const names = distinct.map((f) => f.clip.name);
+    await this.context.withinTransaction(() => Promise.all(distinct.map((f) => (f.slot ? f.slot.deleteClip() : f.track.deleteClip(f.clip)))));
+    return names;
+  }
+
   notes(address: string): NoteDescription[] {
     return this.midiClip(address).notes;
   }

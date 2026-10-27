@@ -97,6 +97,9 @@ export function createServer(deps: ServerDeps): McpServer {
 
   const viaBridge = " Needs the LiveRemote bridge (see get_capabilities).";
 
+  /** Starts every step synchronously inside one transaction, so Live keeps them as one undo step. */
+  const inOneStep = (steps: (() => Promise<unknown>)[]) => live.context.withinTransaction(() => Promise.all(steps.map((step) => step())));
+
   /**
    * A Max for Live author can mark a parameter "[ask first]" (a Pull, Push or Store action, say). Changing it to
    * anything but its default needs userAsked: true; otherwise the whole call is refused, so nothing half happens.
@@ -359,12 +362,15 @@ export function createServer(deps: ServerDeps): McpServer {
 
   server.registerTool(
     "delete_device",
-    { description: "Delete a device from its track or chain.", inputSchema: { device: address } },
-    guarded(async ({ device }) => {
-      const { device: d, holder } = live.locateDevice(device);
-      const name = d.name;
-      await holder.deleteDevice(d);
-      return { deleted: name };
+    {
+      description: "Delete one device (device) or several (devices) from their tracks or chains, as one undo step. Every address is checked first; if one is wrong, nothing is deleted.",
+      inputSchema: { device: address.optional(), devices: z.array(address).optional() },
+    },
+    guarded(async ({ device, devices }) => {
+      const found = unique(listOf(device, devices, "device")).map((a) => live.locateDevice(a));
+      const deleted = found.map((f) => f.device.name);
+      await inOneStep(found.map((f) => () => f.holder.deleteDevice(f.device)));
+      return { deleted: deleted.length === 1 ? deleted[0] : deleted };
     }),
   );
 
@@ -381,12 +387,15 @@ export function createServer(deps: ServerDeps): McpServer {
 
   server.registerTool(
     "delete_track",
-    { description: "Delete a track.", inputSchema: { track: address } },
-    guarded(async ({ track }) => {
-      const t = live.track(track);
-      const name = t.name;
-      await live.song.deleteTrack(t);
-      return { deleted: name };
+    {
+      description: "Delete one track (track) or several (tracks), as one undo step. Every address is checked first; if one is wrong, nothing is deleted.",
+      inputSchema: { track: address.optional(), tracks: z.array(address).optional() },
+    },
+    guarded(async ({ track, tracks }) => {
+      const found = [...new Set(unique(listOf(track, tracks, "track")).map((a) => live.track(a)))];
+      const deleted = found.map((t) => t.name);
+      await inOneStep(found.map((t) => () => live.song.deleteTrack(t)));
+      return { deleted: deleted.length === 1 ? deleted[0] : deleted };
     }),
   );
 
@@ -534,8 +543,14 @@ export function createServer(deps: ServerDeps): McpServer {
 
   server.registerTool(
     "delete_clip",
-    { description: "Delete a session or arrangement clip.", inputSchema: { clip: clipAddress } },
-    guarded(async ({ clip }) => ({ deleted: await live.deleteClip(clip) })),
+    {
+      description: "Delete one session or arrangement clip (clip) or several (clips), as one undo step. Every address is checked first; if one is wrong, nothing is deleted.",
+      inputSchema: { clip: clipAddress.optional(), clips: z.array(clipAddress).optional() },
+    },
+    guarded(async ({ clip, clips }) => {
+      const deleted = await live.deleteClips(unique(listOf(clip, clips, "clip")));
+      return { deleted: deleted.length === 1 ? deleted[0] : deleted };
+    }),
   );
 
   server.registerTool(
@@ -634,6 +649,17 @@ export function notInLive(m: M4lDevice, deviceAddress: string): { name: string; 
         : [];
       return related.length ? { name: p.longName, seeInstead: related } : { name: p.longName };
     });
+}
+
+/** One address or a list of them, as a list; at least one. */
+function listOf(one: string | undefined, many: string[] | undefined, what: string): string[] {
+  const all = [...(one ? [one] : []), ...(many ?? [])];
+  if (all.length === 0) throw new LiveError(`give ${what} or ${what}s`);
+  return all;
+}
+
+function unique(list: string[]): string[] {
+  return [...new Set(list)];
 }
 
 function stripUndefined<T extends Record<string, unknown>>(obj: T): Record<string, unknown> {
