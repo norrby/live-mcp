@@ -3,12 +3,13 @@
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { measure, parseAudio } from "../audio/analyse.js";
+import { parseMidi } from "../midi/smf.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { LiveAdapter, LiveError, type ParameterInfo } from "../live/adapter.js";
 import { explain } from "../live/errors.js";
 import { ChangeTracker } from "../live/changes.js";
-import { M4lRegistry } from "../m4l/registry.js";
+import { M4lRegistry, isForbidden } from "../m4l/registry.js";
 import type { M4lDevice, M4lParameter } from "../m4l/amxd.js";
 import { AudioTrack, Device, Track } from "@ableton-extensions/sdk";
 import { Bridge, BridgeError } from "../bridge/client.js";
@@ -45,6 +46,8 @@ export interface ServerDeps {
   changes: ChangeTracker;
   version: string;
   log: (...a: unknown[]) => void;
+  /** where browser items of the User Library live on disk */
+  userLibrary?: string;
 }
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
@@ -349,7 +352,7 @@ export function createServer(deps: ServerDeps): McpServer {
   server.registerTool(
     "load_browser_item",
     {
-      description: "Load any loadable browser item onto a track by name: a saved preset (\"My Synth.adv\" keeps everything it was saved with, including an External Instrument's MIDI To / Audio From), a Max for Live device (\"My Device.amxd\"), a plug-in or a built-in device. Live places it after the track's selected device, or last, and selects the track while doing so. The first match across the browser roots wins; use browse to see what exists." + viaBridge,
+      description: "Load any loadable browser item onto a track by name: a saved preset (\"My Synth.adv\" keeps everything it was saved with, including an External Instrument's MIDI To / Audio From), a Max for Live device (\"My Device.amxd\"), a plug-in or a built-in device. Live places it after the track's selected device, or last, and selects the track while doing so. The first match across the browser roots wins; use browse to see what exists. A MIDI file (.mid) does not load this way: use import_midi_file." + viaBridge,
       inputSchema: { track: address, item: z.string().describe("Name as the browser shows it, with or without extension") },
     },
     guarded(async ({ track, item }) => {
@@ -460,6 +463,79 @@ export function createServer(deps: ServerDeps): McpServer {
         clips: clips.map((c) => ({ ...c, playing: stateOf(c.slot)?.is_playing ?? false, triggered: stateOf(c.slot)?.is_triggered ?? false, recording: stateOf(c.slot)?.is_recording ?? false })),
         arrangement,
       };
+    }),
+  );
+
+  // ---- MIDI files ----------------------------------------------------------------------------------------------
+
+  /** A browser item's file, from the uri Live gives it: the User Library and folders added under Places. */
+  const browserItemFile = async (item: string): Promise<string> => {
+    const found = await bridge.call<{ uri: string } | null>("browser_uri", [item]);
+    if (!found) throw new LiveError(`no item named "${item}" in Live's browser; use browse to see what exists, or give the file's path`);
+    const [where, rest = ""] = found.uri.split("#");
+    const parts = rest.split(":").map(decodeURIComponent);
+    if (where === "query:UserLibrary") return path.join(deps.userLibrary ?? path.join(process.env.HOME ?? "", "Music", "Ableton", "User Library"), ...parts);
+    if (where.startsWith("userfolder:")) return path.join(decodeURIComponent(where.slice("userfolder:".length)), ...parts);
+    throw new LiveError(`"${item}" is in ${found.uri.split(":")[1]?.split("#")[0] ?? "a Live pack"}, not a file this server can read; save it to the User Library first`);
+  };
+
+  /** The file's bytes: read directly while developing, through the bridge when Live's file permissions forbid it. */
+  const readMidi = async (file: string): Promise<Buffer> => {
+    if (!/\.midi?$/i.test(file)) throw new LiveError(`${file} is not a MIDI file (.mid or .midi)`);
+    try {
+      return fs.readFileSync(file);
+    } catch (e) {
+      if (!isForbidden(e)) throw new LiveError(`cannot read ${file}: ${(e as Error).message}`);
+    }
+    return Buffer.from(await bridge.call<string>("midi_read", [file]), "base64");
+  };
+
+  server.registerTool(
+    "import_midi_file",
+    {
+      description:
+        "Read a MIDI file (.mid) and, given a track, put its notes into a new MIDI clip: in a session slot (slot) or the arrangement (start, in beats). Name the file by its path (file) or by its name in Live's browser (item, e.g. \"Bass line.mid\" in the User Library). Without track, only describes the file: tempo, meter, length and its parts. A file with several parts needs part (index or name), or part \"all\" to merge them. The clip is as long as the notes, rounded up to whole bars, unless length is given. The set's tempo is not changed. Reading the file through the browser or under Live's file permissions needs the LiveRemote bridge.",
+      inputSchema: {
+        file: z.string().optional().describe("Absolute path to the .mid file"),
+        item: z.string().optional().describe("The file's name in Live's browser"),
+        track: address.optional().describe("A MIDI track; leave out to only describe the file"),
+        slot: z.number().int().min(0).optional(),
+        start: z.number().min(0).optional().describe("Arrangement position in beats; give slot or start"),
+        part: z.union([z.number().int().min(0), z.string()]).optional(),
+        length: z.number().positive().optional().describe("Clip length in beats"),
+        name: z.string().optional().describe("Clip name; default the part's name"),
+      },
+    },
+    guarded(async ({ file, item, track, slot, start, part, length, name }) => {
+      if (!file === !item) throw new LiveError("give file (a path) or item (a name in Live's browser), one of them");
+      const where = file ?? (await browserItemFile(item!));
+      if (file && !path.isAbsolute(file)) throw new LiveError(`file must be an absolute path, not "${file}"`);
+      let midi;
+      try {
+        midi = parseMidi(await readMidi(where));
+      } catch (e) {
+        if (e instanceof LiveError || e instanceof BridgeError) throw e;
+        throw new LiveError(`${where}: ${(e as Error).message}`);
+      }
+      const parts = midi.parts.map((p) => ({ index: p.index, name: p.name, channels: p.channels, notes: p.notes.length, pitches: p.notes.length ? [Math.min(...p.notes.map((n) => n.pitch)), Math.max(...p.notes.map((n) => n.pitch))] : [] }));
+      const about = { file: where, bpm: midi.bpm, timeSignature: midi.timeSignature, lengthBeats: midi.lengthBeats, parts };
+      if (!track) return about;
+      if (!midi.parts.length) throw new LiveError(`${where} has no notes`);
+      let chosen = midi.parts;
+      if (part === "all") chosen = midi.parts;
+      else if (part !== undefined) chosen = midi.parts.filter((p) => p.index === part || p.name === part);
+      else if (midi.parts.length > 1) throw new LiveError(`${where} has ${midi.parts.length} parts (${midi.parts.map((p) => `${p.index} "${p.name}"`).join(", ")}): give part, or part "all"`);
+      if (!chosen.length) throw new LiveError(`no part ${JSON.stringify(part)} in ${where}; parts: ${midi.parts.map((p) => `${p.index} "${p.name}"`).join(", ")}`);
+      const notes = chosen.flatMap((p) => p.notes).map((n) => ({ ...n, velocity: Math.min(127, Math.max(1, n.velocity)) }));
+      const end = Math.max(...notes.map((n) => n.startTime + n.duration));
+      const bar = midi.timeSignature ? (midi.timeSignature[0] * 4) / midi.timeSignature[1] : 4;
+      const clipLength = length ?? Math.max(bar, Math.ceil(end / bar - 1e-9) * bar);
+      const { clip, address: a } = await live.createMidiClip(track, { slot, start, length: clipLength });
+      live.context.withinTransaction(() => {
+        clip.name = name ?? (chosen.length === 1 ? chosen[0].name : path.basename(where, path.extname(where)));
+        clip.notes = notes;
+      });
+      return { ...live.clipInfo(clip, a), from: where, parts: chosen.map((p) => p.name), notesImported: notes.length, fileBpm: midi.bpm, note: midi.bpm ? `the file is at ${midi.bpm} BPM; the set's tempo was not changed` : undefined };
     }),
   );
 

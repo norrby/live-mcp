@@ -175,7 +175,7 @@ export class M4lRegistry {
 }
 
 /** Node's permission model, which Live applies to installed extensions, refuses with ERR_ACCESS_DENIED. */
-function isForbidden(e: unknown): boolean {
+export function isForbidden(e: unknown): boolean {
   const err = e as NodeJS.ErrnoException;
   return err?.code === "ERR_ACCESS_DENIED" || /Access to this API has been restricted/.test(String(err?.message));
 }

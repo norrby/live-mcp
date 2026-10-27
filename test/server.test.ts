@@ -347,3 +347,29 @@ test("measure_audio renders an audio track's range, measures it, and refuses MID
   assert.match((await call(c, "measure_audio", { track: "t1", start: 4, end: 2 })).data, /end must come after start/);
   await c.close();
 });
+
+test("import_midi_file describes a file, and puts the chosen part into a clip as long as whole bars", async () => {
+  const vlq = (n: number) => { const out = [n & 0x7f]; while ((n >>= 7)) out.unshift((n & 0x7f) | 0x80); return out; };
+  const trk = (events: number[]) => { const b = Buffer.from(events); const h = Buffer.alloc(8); h.write("MTrk", 0, "latin1"); h.writeUInt32BE(b.length, 4); return Buffer.concat([h, b]); };
+  const head = Buffer.alloc(14); head.write("MThd", 0, "latin1"); head.writeUInt32BE(6, 4); head.writeUInt16BE(1, 8); head.writeUInt16BE(2, 10); head.writeUInt16BE(96, 12);
+  const named = (n: string) => [0, 0xff, 0x03, n.length, ...Buffer.from(n, "latin1")];
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "live-mcp-midi-")), "song.mid");
+  fs.writeFileSync(file, Buffer.concat([head,
+    trk([...named("Bass"), 0, 0x90, 33, 100, ...vlq(96 * 5), 0x80, 33, 0, 0, 0xff, 0x2f, 0]),
+    trk([...named("Lead"), 0, 0x90, 72, 0, 0, 0x90, 72, 110, ...vlq(96), 0x80, 72, 0, 0, 0xff, 0x2f, 0])]));
+  const c = await client();
+  const about = (await call(c, "import_midi_file", { file })).data;
+  assert.deepEqual(about.parts.map((p: { name: string; notes: number }) => [p.name, p.notes]), [["Bass", 1], ["Lead", 1]]);
+  assert.match((await call(c, "import_midi_file", { file, track: "t0", slot: 0 })).data, /2 parts .* give part/);
+  const made = (await call(c, "import_midi_file", { file, track: "t0", slot: 0, part: "Bass" })).data;
+  assert.equal(made.name, "Bass");
+  assert.equal(made.length, 8, "5 beats round up to two 4/4 bars");
+  assert.equal(made.notesImported, 1);
+  const all = (await call(c, "import_midi_file", { file, track: "t0", start: 96, part: "all", name: "Both" })).data;
+  assert.equal(all.notesImported, 2);
+  assert.match((await call(c, "import_midi_file", { file: "/tmp/song.wav", track: "t0", slot: 0 })).data, /not a MIDI file/);
+  assert.match((await call(c, "import_midi_file", { item: "song.mid" })).data, /LiveRemote is not reachable/);
+  assert.match((await call(c, "import_midi_file", {})).data, /give file .* or item/);
+  await call(c, "delete_clip", { clips: [made.address, all.id] });
+  await c.close();
+});

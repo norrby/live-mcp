@@ -19,6 +19,7 @@ export function capabilities(state: CapabilityState) {
       `recognise Max for Live devices from their .amxd files (${state.knownDevices} known${state.amxdVia === "bridge" ? ", read through the LiveRemote bridge" : ""}) and give long parameter names, units, choices and help texts`,
       "find parameters by name across the set",
       "clips: create MIDI clips in session slots or the arrangement, audio clips from files, read and replace notes, rename, loop, mute, delete",
+      "import MIDI files (.mid) into session or arrangement clips, by path or by their name in Live's browser",
       "listen: render part of an audio track's arrangement and measure peak, RMS, loudness (LUFS), clipping and silence",
     ],
     viaBridge: [
