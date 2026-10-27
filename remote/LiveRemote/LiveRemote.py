@@ -274,6 +274,8 @@ class LiveRemote(ControlSurface):
         import Live
         obj = Live
         for part in [p for p in str(path).split(".") if p]:
+            if part.startswith("_"):
+                raise ValueError("private names are not shown")
             obj = getattr(obj, part)
         return [a for a in dir(obj) if not a.startswith("_")]
 
@@ -282,6 +284,8 @@ class LiveRemote(ControlSurface):
         import Live
         obj = Live
         for part in [p for p in str(path).split(".") if p]:
+            if part.startswith("_"):
+                raise ValueError("private names are not shown")
             obj = getattr(obj, part)
         return getattr(obj, "__doc__", None)
 
@@ -295,20 +299,33 @@ class LiveRemote(ControlSurface):
             raise ValueError("clip slot %s is empty" % slot)
         return clip
 
+    @staticmethod
+    def _nth(seq, n, what):
+        n = int(n)
+        if n < 0 or n >= len(seq):
+            raise ValueError("no %s %d (there are %d)" % (what, n, len(seq)))
+        return seq[n]
+
     def _param_from_ref(self, t, ref):
         if "mixer" in ref:
             m = t.mixer_device
-            if ref["mixer"] == "send":
-                return m.sends[int(ref.get("index", 0))]
-            return getattr(m, str(ref["mixer"]))
+            kind = str(ref["mixer"])
+            if kind == "send":
+                return self._nth(m.sends, ref.get("index", 0), "send")
+            if kind == "volume":
+                return m.volume
+            if kind == "panning":
+                return m.panning
+            raise ValueError("unknown mixer control %r" % kind)
         path = list(ref["devices"])
-        devices = t.devices
-        d = devices[int(path[0])]
+        if not path or len(path) % 2 == 0:
+            raise ValueError("a device path is device, then chain and device per rack level")
+        d = self._nth(t.devices, path[0], "device")
         i = 1
         while i + 1 < len(path):
-            d = d.chains[int(path[i])].devices[int(path[i + 1])]
+            d = self._nth(self._nth(d.chains, path[i], "chain").devices, path[i + 1], "device")
             i += 2
-        return d.parameters[int(ref["param"])]
+        return self._nth(d.parameters, ref["param"], "parameter")
 
     def _ref_of(self, t, param):
         m = t.mixer_device
