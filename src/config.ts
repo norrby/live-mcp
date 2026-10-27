@@ -60,20 +60,44 @@ export function loadConfig(storageDirectory: string | undefined, log: (...a: unk
   return { ...(data as Config), file };
 }
 
-/** The text a user pastes to connect a client: a Claude Code command and a VS Code (Copilot) command and mcp.json entry. */
-export function connectText(config: Pick<Config, "port" | "token">): string {
+/** The two commands that connect a client: Claude Code, and VS Code with GitHub Copilot. */
+export function connectLines(config: Pick<Config, "port" | "token">): { claudeCode: string; vsCode: string } {
   const url = `http://127.0.0.1:${config.port}/mcp`;
   const auth = config.token ? ` --header "Authorization: Bearer ${config.token}"` : "";
   const headers = config.token ? `, "headers": { "Authorization": "Bearer ${config.token}" }` : "";
+  return {
+    claudeCode: `claude mcp add -s user --transport http live ${url}${auth}`,
+    vsCode: `code --add-mcp '{"name":"live","type":"http","url":"${url}"${headers}}'`,
+  };
+}
+
+/** Turns the token on (a new random one) or off, in memory and in config.json, and rewrites connect.txt. */
+export function setToken(config: Config, on: boolean, log: (...a: unknown[]) => void): void {
+  config.token = on ? randomBytes(24).toString("base64url") : "";
+  try {
+    const data = JSON.parse(fs.readFileSync(config.file, "utf8")) as Record<string, unknown>;
+    data.token = config.token;
+    fs.writeFileSync(config.file, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
+  } catch (e) {
+    log(`cannot save the token in ${config.file}: ${String(e)}`);
+  }
+  writeConnectFile(config, log);
+}
+
+/** The text a user pastes to connect a client: a Claude Code command and a VS Code (Copilot) command and mcp.json entry. */
+export function connectText(config: Pick<Config, "port" | "token">): string {
+  const url = `http://127.0.0.1:${config.port}/mcp`;
+  const headers = config.token ? `, "headers": { "Authorization": "Bearer ${config.token}" }` : "";
+  const lines = connectLines(config);
   return [
     `# Live MCP is listening on ${url}`,
     config.token ? "" : "# No token: programs on this computer can connect; web pages cannot.",
     "",
     "## Claude Code",
-    `claude mcp add -s user --transport http live ${url}${auth}`,
+    lines.claudeCode,
     "",
     "## VS Code / GitHub Copilot",
-    `code --add-mcp '{"name":"live","type":"http","url":"${url}"${headers}}'`,
+    lines.vsCode,
     "",
     "## or by hand in .vscode/mcp.json or the user mcp.json",
     `{ "servers": { "live": { "type": "http", "url": "${url}"${headers} } } }`,

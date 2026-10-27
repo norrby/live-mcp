@@ -11,7 +11,10 @@ export interface HttpOptions {
   port: number;
   host?: string;
   path?: string;
-  token?: string;
+  /** a token, or a function giving the current one (it can be switched on and off while running); "" means none */
+  token?: string | (() => string);
+  /** called once per answered request, with what was asked and the HTTP status */
+  onRequest?: (what: string, status: number) => void;
   requestTimeoutMs?: number;
   log?: (...args: unknown[]) => void;
   makeServer: () => McpServer;
@@ -113,9 +116,10 @@ export function startHttp(options: HttpOptions): http.Server {
       }
       if (url === "/health" && req.method === "GET") return reply(res, 200, { ok: true, ...(options.health?.() ?? {}) });
       if (url !== path) return reply(res, 404, { error: "not found" });
-      if (options.token && !tokenMatches(req.headers.authorization, options.token)) return reply(res, 401, { error: "bad or missing bearer token" });
+      const token = typeof options.token === "function" ? options.token() : options.token;
+      if (token && !tokenMatches(req.headers.authorization, token)) return reply(res, 401, { error: "bad or missing bearer token" });
       // Without a token every local program may call; browsers (which always send Origin) still may not.
-      if (!options.token && req.headers.origin) return reply(res, 403, { error: "browser requests are refused while no token is configured" });
+      if (!token && req.headers.origin) return reply(res, 403, { error: "browser requests are refused while no token is configured" });
       if (req.method === "GET") return reply(res, 405, { error: "no server-sent stream in stateless mode" }, { allow: "POST" });
       if (req.method !== "POST") return reply(res, 405, { error: "POST only" }, { allow: "POST" });
 
@@ -150,6 +154,7 @@ export function startHttp(options: HttpOptions): http.Server {
         reply(res, status, body);
         const errors = ([] as unknown[]).concat(body ?? []).filter((b) => (b as { error?: unknown; result?: { isError?: boolean } })?.error || (b as { result?: { isError?: boolean } })?.result?.isError).length;
         log(`${status} ${describe} ${(performance.now() - t0).toFixed(0)} ms${errors ? ` (${errors} error)` : ""}`);
+        options.onRequest?.(describe, status);
         void mcp.close().catch(() => {});
       };
       const transport = new RequestTransport((responses) => finish(200, batch ? responses : responses[0]));
