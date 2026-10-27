@@ -94,6 +94,16 @@ Values are in Live's internal units, within the `min` and `max` that `list_param
 choices takes the index of the choice. With the bridge, `set_parameter_display` takes the value as Live shows it,
 such as `-6 dB`.
 
+## For Max for Live authors
+
+Live MCP reads three things from your `.amxd` file and passes them to the assistant:
+
+- **The Info View text** of each parameter, as its help.
+- **The patcher's description** (Patcher Inspector), as `about`. Say there how a program should drive the device:
+  which parameter selects what others edit, what a button really does.
+- **`[ask first]`** at the end of a parameter's Info View text marks it as changed only when the user asks.
+  Live MCP refuses to change it from its default otherwise.
+
 ## Folders
 
 | Folder | Contents |
