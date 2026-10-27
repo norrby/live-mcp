@@ -95,14 +95,16 @@ export function createServer(deps: ServerDeps): McpServer {
     "list_parameters",
     {
       description:
-        "All parameters of a device: address, name, range, choices, current value. For recognised Max for Live devices also the long name, unit and help text, the device's own description (m4l.about: read it first, it is the author's word on how to drive the device), and the controls Live does not expose with the parameters that reach the same thing (m4l.notInLive). With display=true (needs the bridge) also the value as Live shows it, e.g. \"-12.0 dB\". Max for Live short names may repeat: address by index.",
+        "All parameters of a device: address, name, range, choices, current value. For recognised Max for Live devices also the long name, unit and help text, the device's own description (m4l.about: read it first, it is the author's word on how to drive the device), and the controls Live does not expose with the parameters that reach the same thing (m4l.notInLive). With display=true (needs the bridge) also the value as Live shows it, e.g. \"-12.0 dB\". Max for Live short names may repeat: address by index. A large device answers with a lot of text: narrow it with query, or leave out the help texts with help=false.",
       inputSchema: {
         device: address,
         values: z.boolean().default(true).describe("Include current values"),
         display: z.boolean().default(false).describe("Include Live's display strings via the bridge (built-in device units)"),
+        query: z.string().optional().describe("Only parameters whose name or long name contains this (case-insensitive)"),
+        help: z.boolean().default(true).describe("Include the help texts of Max for Live parameters"),
       },
     },
-    guarded(async ({ device, values, display }) => {
+    guarded(async ({ device, values, display, query, help }) => {
       const d = live.device(device);
       const infos = live.deviceParameters(device);
       if (values) {
@@ -110,14 +112,19 @@ export function createServer(deps: ServerDeps): McpServer {
         infos.forEach((p, i) => (p.value = vals[i]));
       }
       const m4l = m4lFor(device);
-      const rows = infos.map((p, i) => compactParam(p, m4l?.parameters[i]));
+      const rows = infos.map((p, i) => compactParam(p, m4l?.parameters[i], help));
       if (display) {
         const strs = await bridge.call<{ index: number; str: string }[]>("param_strs", bridgeDeviceArgs(live, device));
         for (const s of strs) if (rows[s.index]) rows[s.index].display = s.str;
       }
+      const q = query?.toLowerCase();
+      const matches = (text: unknown) => !q || (typeof text === "string" && text.toLowerCase().includes(q));
       const out: Record<string, unknown> = { device, name: d.name };
-      if (m4l) out.m4l = stripUndefined({ file: m4l.file, frozen: m4l.frozen, about: m4l.description, notInLive: notInLive(m4l, device) });
-      out.parameters = rows;
+      if (m4l) {
+        const hidden = notInLive(m4l, device).filter((h) => matches(h.name) || h.seeInstead?.some(matches));
+        out.m4l = stripUndefined({ file: m4l.file, frozen: m4l.frozen, about: m4l.description, notInLive: hidden.length ? hidden : undefined });
+      }
+      out.parameters = q ? rows.filter((r) => matches(r.name) || matches(r.longName)) : rows;
       return out;
     }),
   );
@@ -125,7 +132,7 @@ export function createServer(deps: ServerDeps): McpServer {
   server.registerTool(
     "find_parameters",
     {
-      description: "Find parameters by name across the set (case-insensitive substring of the short name, or of the long name for recognised Max for Live devices). Returns addresses to use with get_parameters/set_parameters.",
+      description: "Find parameters by name across the set (case-insensitive substring of the short name, or of the long name for recognised Max for Live devices). Returns addresses to use with get_parameters/set_parameters, with range, choices and, for Max for Live devices, the help text.",
       inputSchema: { query: z.string().min(1), device: address.optional().describe("Limit to one device") },
     },
     guarded(({ query, device }) => {
@@ -134,13 +141,10 @@ export function createServer(deps: ServerDeps): McpServer {
       const search = (deviceAddress: string) => {
         const d = live.device(deviceAddress);
         const m4l = m4lFor(deviceAddress);
-        d.parameters.forEach((p, i) => {
+        const infos = live.deviceParameters(deviceAddress);
+        infos.forEach((p, i) => {
           const long = m4l?.parameters[i]?.longName;
-          if (p.name.toLowerCase().includes(q) || long?.toLowerCase().includes(q)) {
-            const row: Record<string, unknown> = { address: `${deviceAddress}/p${i}`, name: p.name, device: d.name };
-            if (long && long !== p.name) row.longName = long;
-            hits.push(row);
-          }
+          if (p.name.toLowerCase().includes(q) || long?.toLowerCase().includes(q)) hits.push({ ...compactParam(p, m4l?.parameters[i]), device: d.name });
         });
       };
       const walk = (devices: { address: string; chains?: { devices: { address: string }[] }[] }[]) => {
@@ -551,7 +555,7 @@ function stripUndefined<T extends Record<string, unknown>>(obj: T): Record<strin
   return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined));
 }
 
-function compactParam(p: ParameterInfo, m?: M4lParameter): Record<string, unknown> {
+function compactParam(p: ParameterInfo, m?: M4lParameter, help = true): Record<string, unknown> {
   const out: Record<string, unknown> = { address: p.address, name: p.name };
   if (m && m.longName !== p.name) out.longName = m.longName;
   if (p.value !== undefined) out.value = p.value;
@@ -559,6 +563,6 @@ function compactParam(p: ParameterInfo, m?: M4lParameter): Record<string, unknow
   out.max = p.max;
   if (m?.unit) out.unit = m.unit;
   if (p.items) out.items = p.items;
-  if (m?.help) out.help = m.help;
+  if (help && m?.help) out.help = m.help;
   return out;
 }

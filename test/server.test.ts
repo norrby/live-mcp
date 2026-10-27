@@ -74,6 +74,11 @@ test("lists and sets parameters; a batch is one transaction; bad values are repo
   assert.equal(list.data.parameters[2].name, "Cutoff");
   assert.equal(list.data.parameters[2].value, 127);
   assert.deepEqual(list.data.parameters[3].items, ["Lowp", "Band", "High"]);
+  const narrowed = await call(c, "list_parameters", { device: "t0/d0", query: "cut" });
+  assert.deepEqual(narrowed.data.parameters.map((r: { address: string }) => r.address), ["t0/d0/p2"]);
+  const found = await call(c, "find_parameters", { query: "cutoff" });
+  assert.equal(found.data.hits[0].address, "t0/d0/p2");
+  assert.equal(found.data.hits[0].max, list.data.parameters[2].max, "a search hit carries the range");
   const before = fake.transactions;
   const set = await call(c, "set_parameters", { changes: [{ address: "t0/d0/p2", value: 64 }, { address: "t0/d0/p3", value: 2 }, { address: "t0/d0/p1", value: 999 }] });
   assert.ok(set.ok);
