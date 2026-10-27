@@ -10,7 +10,7 @@ line never is), and never runs strings as code: every cmd maps to a cmd_*
 method with fixed parameters. A token is optional: when a file
 .liveremote-token next to this script holds one, every call must carry it.
 
-Commands: ping, amxd_list, amxd_read, clip_envelopes, set_clip_envelope, clear_clip_envelope, lom_dir, lom_doc, reload, device_dir, tracks, devices, add_device, delete_device, create_midi_track,
+Commands: ping, amxd_list, amxd_read, midi_read, browser_uri, clip_envelopes, set_clip_envelope, clear_clip_envelope, lom_dir, lom_doc, reload, device_dir, tracks, devices, add_device, delete_device, create_midi_track,
   transport, selection, scenes, clips, fire, undo, redo, param, param_strs, param_set_display (for the live-mcp bridge),
 create_audio_track, delete_track, rename_track, select_track, routing,
 routing_options, param, browser, log.
@@ -83,15 +83,24 @@ def amxd_list(dirs):
     return found
 
 
-def amxd_read(path):
-    """One .amxd file as base64."""
-    path = str(path)
-    if not path.lower().endswith(".amxd") or not os.path.isfile(path):
-        raise ValueError("not an .amxd file: %r" % path)
+def _read_b64(path, endings, what):
+    path = os.path.expanduser(str(path))
+    if not path.lower().endswith(endings) or not os.path.isfile(path):
+        raise ValueError("not %s: %r" % (what, path))
     if os.path.getsize(path) > AMXD_MAX_BYTES:
         raise ValueError("%s is larger than %d bytes" % (path, AMXD_MAX_BYTES))
     with open(path, "rb") as f:
         return base64.b64encode(f.read()).decode("ascii")
+
+
+def amxd_read(path):
+    """One .amxd file as base64."""
+    return _read_b64(path, (".amxd",), "an .amxd file")
+
+
+def midi_read(path):
+    """One MIDI file (.mid, .midi) as base64; the bridge reads these two kinds of file and nothing else."""
+    return _read_b64(path, (".mid", ".midi"), "a MIDI file")
 
 
 
@@ -251,6 +260,14 @@ class LiveRemote(ControlSurface):
 
     def cmd_amxd_read(self, path):
         return amxd_read(path)
+
+    def cmd_midi_read(self, path):
+        return midi_read(path)
+
+    def cmd_browser_uri(self, name):
+        """The uri and source of the first loadable browser item with this name, e.g. query:UserLibrary#Clips:x.mid."""
+        label, item = self._find_item(name)
+        return None if item is None else {"from": label, "uri": item.uri, "source": item.source}
 
     def cmd_lom_dir(self, path):
         """Introspection: public names of a class in Live's Python module, e.g. "Clip.Clip" (read-only)."""
