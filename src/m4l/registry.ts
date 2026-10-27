@@ -28,6 +28,7 @@ interface Entry {
 }
 
 const RESCAN_MS = 60_000;
+const RETRY_MS = 5_000;
 
 export class M4lRegistry {
   private entries = new Map<string, Entry>();
@@ -110,6 +111,8 @@ export class M4lRegistry {
         for (const key of this.entries.keys()) if (!seen.has(key)) this.entries.delete(key);
       } catch (e) {
         errors.push(`Max for Live files through the bridge: ${(e as Error).message}`);
+        // The bridge was not there (Live still starting, say): try again soon rather than in a minute.
+        this.scannedAt = Date.now() - RESCAN_MS + RETRY_MS;
       }
       this.errors.splice(0, this.errors.length, ...errors);
     })().finally(() => (this.refreshing = undefined));

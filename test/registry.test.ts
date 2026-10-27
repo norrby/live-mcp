@@ -61,6 +61,8 @@ test("an unreachable bridge leaves an explanation instead of an exception", asyn
   registry.via = "bridge";
   await registry.refresh();
   assert.match(registry.errors[0], /through the bridge: LiveRemote is not reachable/);
+  const scannedAt = (registry as unknown as { scannedAt: number }).scannedAt;
+  assert.ok(Date.now() - scannedAt >= 55_000, "a failed refresh is retried within seconds, not after a minute");
 });
 
 test("a device's description and the visible parameters that reach its hidden controls", async () => {
