@@ -27,10 +27,12 @@ export function capabilities(state: CapabilityState) {
       { what: "undo and redo", available: bridge },
       { what: "parameter values as Live displays them (dB, Hz, ms) for built-in devices, and setting a parameter by such a value", available: bridge },
       { what: "loading anything the browser shows: saved presets (with their routing), Max for Live devices, plug-ins", available: bridge },
+      { what: "automation in session clips: read, draw with ramps and curves, clear", available: bridge },
     ],
     cannot: [
       { what: "events or listeners: nothing is pushed to the client", why: "the Extensions API has no notifications; get_changes reports what changed since the last call" },
-      { what: "automation, warping, freezing, recording, quantizing, moving a clip's loop or markers", why: "not in the Extensions API 1.0 nor in the bridge" },
+      { what: "arrangement automation (track envelopes and arrangement clip envelopes)", why: "Live's Python API returns no envelope for arrangement clips and has none for tracks; the Extensions API has no automation at all" },
+      { what: "warping, freezing, recording, quantizing, moving a clip's loop or markers", why: "not in the Extensions API 1.0 nor in the bridge" },
       { what: "the MIDI To / Audio From of External Instrument and the Audio To / From of External Audio Effect", why: "neither Live's Python API nor the Extensions API exposes them; only Max for Live devices have routing points. Ask the user to set them in Live's window" },
     ],
     notes: [

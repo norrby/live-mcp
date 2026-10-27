@@ -320,3 +320,18 @@ test("several clips are deleted in one undo step, and one wrong address deletes 
   assert.match((await call(c, "delete_clip", {})).data, /give clip or clips/);
   await c.close();
 });
+
+test("clip automation checks the clip, the track, the range and ask-first marks before asking the bridge", async () => {
+  const c = await client();
+  const s = (await call(c, "create_clip", { track: "t0", slot: 0, length: 4, name: "Auto" })).data;
+  const a = (await call(c, "create_clip", { track: "t0", start: 64, length: 4, name: "Arr" })).data;
+  const pts = [{ time: 0, value: 10 }, { time: 4, value: 100 }];
+  assert.match((await call(c, "set_clip_automation", { clip: a.id, parameter: "t0/d0/p2", points: pts })).data, /arrangement clip/);
+  assert.match((await call(c, "set_clip_automation", { clip: s.address, parameter: "t1/d0/c0/d0/p1", points: pts })).data, /another track/);
+  assert.match((await call(c, "set_clip_automation", { clip: s.address, parameter: "t0/d0/p2", points: [{ time: 0, value: 200 }] })).data, /within 0\.\.127/);
+  assert.match((await call(c, "set_clip_automation", { clip: s.address, parameter: "t0/d0/p2", points: [{ time: 9, value: 1 }] })).data, /within the clip/);
+  assert.match((await call(c, "set_clip_automation", { clip: s.address, parameter: "t0/vol", points: [{ time: 0, value: 0.5 }] })).data, /LiveRemote is not reachable/, "a valid call reaches the bridge");
+  assert.match((await call(c, "get_clip_automation", { clip: s.address })).data, /LiveRemote is not reachable/);
+  await call(c, "delete_clip", { clips: [s.address, a.id] });
+  await c.close();
+});

@@ -553,6 +553,100 @@ export function createServer(deps: ServerDeps): McpServer {
     }),
   );
 
+  // ---- clip automation (through the bridge; Live keeps no reachable envelope for arrangement clips) -------------
+
+  const point = z.object({
+    time: z.number().min(0).describe("Beats from the clip start"),
+    value: z.number().describe("In the parameter's own units, within the min..max list_parameters reports"),
+    curve: z
+      .object({ x1: z.number().min(0).max(1), y1: z.number().min(0).max(1), x2: z.number().min(0).max(1), y2: z.number().min(0).max(1) })
+      .optional()
+      .describe("Bezier control points of the segment that starts here; leave out for a straight ramp"),
+  });
+
+  /** A session clip's bridge coordinates; arrangement clips have no envelope any API can reach. */
+  const sessionClip = (clip: string) => {
+    const found = live.locateClip(clip);
+    if (!found.slot) throw new LiveError(`${found.address} is an arrangement clip; Live gives no API access to arrangement automation, only to the envelopes of session clips`);
+    return { ...found, trackIndex: bridgeTrackIndex(live, live.id(found.track)), slotIndex: found.track.clipSlots.indexOf(found.slot) };
+  };
+
+  /** Our address for a parameter ref LiveRemote reports. */
+  const refAddress = (trackAddress: string, ref: { devices?: number[]; param?: number; mixer?: string; index?: number } | null) => {
+    if (!ref) return undefined;
+    if (ref.mixer === "volume") return `${trackAddress}/vol`;
+    if (ref.mixer === "panning") return `${trackAddress}/pan`;
+    if (ref.mixer === "send") return `${trackAddress}/send${ref.index}`;
+    const segs = (ref.devices ?? []).map((n, i) => (i % 2 === 0 ? `d${n}` : `c${n}`));
+    return `${trackAddress}/${segs.join("/")}/p${ref.param}`;
+  };
+
+  server.registerTool(
+    "get_clip_automation",
+    {
+      description:
+        "The automation envelopes of a session clip: each automated parameter's address and its breakpoints [time in beats, value]. The values are as Live stores them in the envelope, which for many built-in parameters is the shown unit (Hz, linear gain), not the min..max of list_parameters; write with set_clip_automation in the parameter's own units." +
+        viaBridge,
+      inputSchema: { clip: clipAddress },
+    },
+    guarded(async ({ clip }) => {
+      const c = sessionClip(clip);
+      const envelopes = await bridge.call<{ ref: never; name: string; events: [number, number][] }[]>("clip_envelopes", [c.trackIndex, c.slotIndex]);
+      const trackAddress = live.trackAddress(c.track);
+      return { clip: c.address, envelopes: envelopes.map((e) => ({ parameter: refAddress(trackAddress, e.ref), name: e.name, points: e.events })) };
+    }),
+  );
+
+  server.registerTool(
+    "set_clip_automation",
+    {
+      description:
+        "Draw automation for one parameter in a session clip, as one undo step: breakpoints with time (beats from the clip start) and value (the parameter's own units, within the min..max list_parameters reports), joined by straight ramps or by a curve. The parameter must be on the clip's own track: a device parameter (t0/d1/p3, also inside racks) or its mixer (t0/vol, t0/pan, t0/send0). replace (default true) clears that parameter's envelope first. Arrangement automation is out of reach of every API in Live." +
+        viaBridge,
+      inputSchema: {
+        clip: clipAddress,
+        parameter: address,
+        points: z.array(point).min(1),
+        replace: z.boolean().default(true),
+        userAsked: z.boolean().optional().describe("Only for a parameter marked askFirst: true when the user asked for this very automation"),
+      },
+    },
+    guarded(async ({ clip, parameter, points, replace, userAsked }) => {
+      const c = sessionClip(clip);
+      const { track, ref } = live.parameterRef(parameter);
+      if (live.id(track) !== live.id(c.track)) throw new LiveError(`${parameter} is on another track than ${c.address}; a clip automates only its own track's devices and mixer`);
+      await refuseUnasked([{ address: parameter, userAsked }]);
+      const p = live.parameter(parameter);
+      const bad = points.filter((pt) => pt.value < p.min || pt.value > p.max);
+      if (bad.length) throw new LiveError(`values must lie within ${p.min}..${p.max} for ${p.name}; not ${bad.map((b) => b.value).join(", ")}`);
+      const info = live.clipInfo(c.clip, c.address);
+      const end = Math.max(info.length, info.loopEnd ?? 0);
+      const late = points.filter((pt) => pt.time > end);
+      if (late.length) throw new LiveError(`times must lie within the clip, 0..${end} beats; not ${late.map((l) => l.time).join(", ")}`);
+      const events = [...points].sort((a, b) => a.time - b.time).map((pt) => (pt.curve ? [pt.time, pt.value, pt.curve.x1, pt.curve.y1, pt.curve.x2, pt.curve.y2] : [pt.time, pt.value]));
+      const result = await bridge.call<{ name: string; events: [number, number][] }>("set_clip_envelope", [c.trackIndex, c.slotIndex, ref, events], { replace });
+      return { clip: c.address, parameter, name: result.name, points: result.events.length, note: "points read back are in Live's envelope units (see get_clip_automation)" };
+    }),
+  );
+
+  server.registerTool(
+    "clear_clip_automation",
+    {
+      description: "Remove the automation of one parameter (parameter) or of every parameter in a session clip, as one undo step." + viaBridge,
+      inputSchema: { clip: clipAddress, parameter: address.optional() },
+    },
+    guarded(async ({ clip, parameter }) => {
+      const c = sessionClip(clip);
+      let ref: unknown = null;
+      if (parameter) {
+        const found = live.parameterRef(parameter);
+        if (live.id(found.track) !== live.id(c.track)) throw new LiveError(`${parameter} is on another track than ${c.address}`);
+        ref = found.ref;
+      }
+      return { clip: c.address, cleared: await bridge.call("clear_clip_envelope", [c.trackIndex, c.slotIndex], ref ? { ref } : {}) };
+    }),
+  );
+
   server.registerTool(
     "fire",
     {

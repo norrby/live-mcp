@@ -1,7 +1,7 @@
 // adapter.ts – everything the MCP layer needs from Live, on top of the Extensions SDK.
 // Reads are synchronous in the SDK; parameter values are async. Objects are addressed by path (address.ts) or handle id.
 import {
-  AudioClip, AudioTrack, Chain, Clip, ClipSlot, DataModelObject, Device, DeviceParameter, MidiClip, MidiTrack, RackDevice, Track,
+  AudioClip, AudioTrack, Chain, Clip, ClipSlot, DataModelObject, Device, DeviceParameter, MidiClip, MidiTrack, RackDevice, Track, TrackMixer,
   type ExtensionContext, type NoteDescription,
 } from "@ableton-extensions/sdk";
 import * as path from "node:path";
@@ -193,6 +193,37 @@ export class LiveAdapter {
     }
     if (parent instanceof Track) return { clip, track: parent, address: `${this.trackAddress(parent)}/a${parent.arrangementClips.indexOf(clip)}` };
     throw new LiveError(`${address}: cannot find the clip's track`);
+  }
+  /**
+   * Where a parameter sits, the way LiveRemote names it: its track, and either a device path (device index on the
+   * track, then chain and device index for each rack level) with the parameter index, or a mixer control.
+   */
+  parameterRef(address: string): { track: Track<V>; ref: { devices: number[]; param: number } | { mixer: "volume" | "panning" } | { mixer: "send"; index: number } } {
+    const p = this.parameter(address);
+    const owner = p.parent;
+    if (owner instanceof TrackMixer) {
+      const track = owner.parent;
+      if (!(track instanceof Track)) throw new LiveError(`${address}: the mixer is not on a track`);
+      if (owner.volume === p) return { track, ref: { mixer: "volume" } };
+      if (owner.panning === p) return { track, ref: { mixer: "panning" } };
+      return { track, ref: { mixer: "send", index: owner.sends.indexOf(p) } };
+    }
+    if (!(owner instanceof Device)) throw new LiveError(`${address} is not a device or track mixer parameter`);
+    const path: number[] = [];
+    let device: Device<V> = owner;
+    for (;;) {
+      const holder = device.parent;
+      if (holder instanceof Track) {
+        path.unshift(holder.devices.indexOf(device));
+        return { track: holder, ref: { devices: path, param: owner.parameters.indexOf(p) } };
+      }
+      if (!(holder instanceof Chain)) throw new LiveError(`${address}: cannot find the device's track`);
+      path.unshift(holder.devices.indexOf(device));
+      const rack = holder.parent;
+      if (!(rack instanceof RackDevice)) throw new LiveError(`${address}: the chain is not in a rack`);
+      path.unshift(rack.chains.indexOf(holder));
+      device = rack;
+    }
   }
   trackAddress(t: Track<V>): string {
     const song = this.song;
