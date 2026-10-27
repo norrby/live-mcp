@@ -28,6 +28,9 @@ export const INSTRUCTIONS = [
   "- get_capabilities says what works now, what needs the LiveRemote bridge, and what no API in Live allows. When something cannot be done, tell the user instead of working around it.",
 ].join("\n");
 
+const READ_ONLY_NOTE =
+  "- The user has set Live MCP to read-only: you can look at the set but change nothing. If the user asks for a change, say that read-only mode is on and can be turned off under Live MCP status… in the right-click menu of a track or scene.";
+
 const READ_ONLY = new Set(["get_set", "get_capabilities", "list_parameters", "find_parameters", "get_parameters", "get_changes", "browse", "get_scenes", "get_clips", "get_notes", "get_routing", "get_device_routing", "get_clip_automation", "measure_audio"]);
 const DESTRUCTIVE = new Set(["delete_device", "delete_track", "delete_clip", "set_notes", "clear_clip_automation"]);
 const IDEMPOTENT = new Set(["set_parameters", "set_parameter_display", "set_track", "set_tempo", "set_clip", "set_notes", "set_routing", "set_device_routing", "set_clip_automation", "clear_clip_automation"]);
@@ -48,6 +51,8 @@ export interface ServerDeps {
   log: (...a: unknown[]) => void;
   /** where browser items of the User Library live on disk */
   userLibrary?: string;
+  /** only the tools that read are offered */
+  readOnly?: boolean;
 }
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
@@ -79,12 +84,16 @@ export function createServer(deps: ServerDeps): McpServer {
   const { live, registry, bridge, changes } = deps;
   const server = new McpServer(
     { name: "live-mcp", version: deps.version },
-    { capabilities: { tools: { listChanged: false }, resources: { listChanged: false } }, instructions: INSTRUCTIONS },
+    {
+      capabilities: { tools: { listChanged: false }, resources: { listChanged: false } },
+      instructions: deps.readOnly ? `${INSTRUCTIONS}\n${READ_ONLY_NOTE}` : INSTRUCTIONS,
+    },
   );
   // Every tool gets its title and hints from annotationsFor, so none can be registered without them.
   const register = server.registerTool.bind(server);
+  // In read-only mode a tool that changes anything is not offered at all.
   (server as unknown as { registerTool: unknown }).registerTool = (name: string, config: { annotations?: ToolAnnotations }, cb: unknown) =>
-    register(name, { ...config, annotations: { ...annotationsFor(name), ...config.annotations } } as never, cb as never);
+    deps.readOnly && !READ_ONLY.has(name) ? undefined : register(name, { ...config, annotations: { ...annotationsFor(name), ...config.annotations } } as never, cb as never);
 
   const m4lFor = (deviceAddress: string): M4lDevice | undefined => registry.match(live.device(deviceAddress).parameters.map((p) => p.name));
 
@@ -133,7 +142,7 @@ export function createServer(deps: ServerDeps): McpServer {
         `Nothing was changed. The device's author marked ${refused.join("; ")} as changed only when the user asks. Do not choose it on your own: ask the user, and repeat the call with userAsked: true on that change only if they asked for it in so many words.`,
       );
   };
-  const capabilityState = async () => ({ bridgeReachable: await bridge.ping(), knownDevices: registry.files().length, amxdVia: registry.via });
+  const capabilityState = async () => ({ bridgeReachable: await bridge.ping(), knownDevices: registry.files().length, amxdVia: registry.via, readOnly: deps.readOnly });
 
   server.registerResource("set", "live://set", { description: "The open Live set: tracks, devices, addresses", mimeType: "application/json" }, async (uri) => ({
     contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(overview(), bigintSafe) }],

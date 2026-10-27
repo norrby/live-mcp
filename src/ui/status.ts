@@ -7,6 +7,7 @@ export interface StatusState {
   url: string;
   /** "" means no token */
   token: string;
+  readOnly: boolean;
   bridge: "reachable" | "not reachable";
   maxForLive: { known: number; via: "files" | "bridge"; errors: string[] };
   lastRequest?: { secondsAgo: number; what: string };
@@ -17,12 +18,14 @@ export interface StatusState {
 }
 
 /** What the dialog answers with; anything else (or nothing) means "close". */
-export type StatusAction = { action: "token_on" } | { action: "token_off" } | { action: "close" };
+export type StatusAction = { action: "token_on" | "token_off" | "read_only_on" | "read_only_off" } | { action: "close" };
+const ACTIONS = ["token_on", "token_off", "read_only_on", "read_only_off"] as const;
 
 export function parseStatusAction(result: string | undefined): StatusAction {
   try {
     const parsed = JSON.parse(result ?? "") as { action?: unknown };
-    if (parsed.action === "token_on" || parsed.action === "token_off") return { action: parsed.action };
+    const action = ACTIONS.find((a) => a === parsed.action);
+    if (action) return { action };
   } catch {
     // closed with the window button, or nothing sent
   }
@@ -83,6 +86,9 @@ ${row("Server", `listening on ${esc(s.url)}`, true)}
 ${row("Assistant", client, Boolean(s.lastRequest))}
 ${row("LiveRemote bridge", bridge, s.bridge === "reachable")}
 ${row("Max for Live", m4l)}
+${row("Changes", s.readOnly
+    ? `read-only: assistants can look but not change anything. <button onclick="send('read_only_off')">Allow changes</button>`
+    : `allowed. <button onclick="send('read_only_on')">Make read-only</button>`, !s.readOnly)}
 ${row("Token", token)}
 </table>
 <h2>Connect Claude Code (run in a terminal; click the text, then copy)</h2>

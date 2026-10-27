@@ -17,6 +17,8 @@ export interface Config {
   bridge: { port: number; tokenFile?: string; token?: string };
   /** Live's User Library: Max for Live devices are searched in its Presets folder */
   userLibrary: string;
+  /** true: clients get only the tools that read; nothing in the set can be changed */
+  readOnly: boolean;
   file: string;
 }
 
@@ -44,6 +46,7 @@ export function loadConfig(storageDirectory: string | undefined, log: (...a: unk
   if (typeof data.token !== "string") (data.token = ""), (changed = true);
   else if (data.token !== "" && data.token.length < 16) (data.token = randomBytes(24).toString("base64url")), (changed = true);
   if (typeof data.userLibrary !== "string" || !data.userLibrary) (data.userLibrary = defaultUserLibrary()), (changed = true);
+  if (typeof data.readOnly !== "boolean") (data.readOnly = false), (changed = true);
   if (!Array.isArray(data.amxdDirectories)) (data.amxdDirectories = [path.join(data.userLibrary, "Presets")]), (changed = true);
   if (!data.bridge || typeof data.bridge !== "object") (data.bridge = { port: DEFAULT_BRIDGE_PORT }), (changed = true);
   if (typeof data.bridge.port !== "number") (data.bridge.port = DEFAULT_BRIDGE_PORT), (changed = true);
@@ -71,17 +74,28 @@ export function connectLines(config: Pick<Config, "port" | "token">): { claudeCo
   };
 }
 
+/** Writes one key of config.json, keeping the others as they are on disk. */
+function saveKey(config: Config, key: "token" | "readOnly", log: (...a: unknown[]) => void): void {
+  try {
+    const data = JSON.parse(fs.readFileSync(config.file, "utf8")) as Record<string, unknown>;
+    data[key] = config[key];
+    fs.writeFileSync(config.file, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
+  } catch (e) {
+    log(`cannot save ${key} in ${config.file}: ${String(e)}`);
+  }
+}
+
 /** Turns the token on (a new random one) or off, in memory and in config.json, and rewrites connect.txt. */
 export function setToken(config: Config, on: boolean, log: (...a: unknown[]) => void): void {
   config.token = on ? randomBytes(24).toString("base64url") : "";
-  try {
-    const data = JSON.parse(fs.readFileSync(config.file, "utf8")) as Record<string, unknown>;
-    data.token = config.token;
-    fs.writeFileSync(config.file, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
-  } catch (e) {
-    log(`cannot save the token in ${config.file}: ${String(e)}`);
-  }
+  saveKey(config, "token", log);
   writeConnectFile(config, log);
+}
+
+/** Turns read-only mode on or off, in memory and in config.json; the next request already follows it. */
+export function setReadOnly(config: Config, on: boolean, log: (...a: unknown[]) => void): void {
+  config.readOnly = on;
+  saveKey(config, "readOnly", log);
 }
 
 /** The text a user pastes to connect a client: a Claude Code command and a VS Code (Copilot) command and mcp.json entry. */

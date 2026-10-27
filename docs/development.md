@@ -54,6 +54,7 @@ on its first start, and `connect.txt` next to it with the commands that connect 
 |---|---|
 | `port` | the port the MCP server listens on |
 | `token` | a password every client must send; `""` (the default) means none |
+| `readOnly` | `true` offers clients only the tools that read; nothing in the set can be changed |
 | `userLibrary` | Live's User Library; set it if you moved yours |
 | `amxdDirectories` | folders searched for `.amxd` files, to recognise Max for Live devices in the set |
 | `bridge.port` | the port LiveRemote listens on |

@@ -5,6 +5,7 @@ export interface CapabilityState {
   knownDevices: number;
   /** how the .amxd files are read: directly, or through the bridge because Live forbids it */
   amxdVia: "files" | "bridge";
+  readOnly?: boolean;
 }
 
 export function capabilities(state: CapabilityState) {
@@ -39,6 +40,7 @@ export function capabilities(state: CapabilityState) {
       { what: "the MIDI To / Audio From of External Instrument and the Audio To / From of External Audio Effect", why: "neither Live's Python API nor the Extensions API exposes them; only Max for Live devices have routing points. Ask the user to set them in Live's window" },
     ],
     notes: [
+      ...(state.readOnly ? ["Read-only mode is on: only the tools that read are offered. The user turns it off under Live MCP status… in Live's right-click menu of a track or scene."] : []),
       "Addresses (t0/d1/p3, t0/s3, t0/a1) are positions; they shift when tracks, devices or arrangement clips move or are deleted. #id addresses are stable while the object exists: use the id a create answers with.",
       "Max for Live devices report short parameter names that can repeat; address by index. Known devices also get long names.",
       "Values go in Live's internal units, within the min..max that list_parameters reports; quantized parameters take the index of the choice. Display strings (dB, Hz) need the bridge.",

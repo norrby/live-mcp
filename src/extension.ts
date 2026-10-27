@@ -2,7 +2,7 @@
 import "./prelude.js";
 import { initialize, type ActivationContext } from "@ableton-extensions/sdk";
 import { installedGlobals } from "./prelude.js";
-import { connectLines, connectText, loadConfig, setToken, writeConnectFile } from "./config.js";
+import { connectLines, connectText, loadConfig, setReadOnly, setToken, writeConnectFile } from "./config.js";
 import { parseStatusAction, statusDialogUrl, statusHtml } from "./ui/status.js";
 import { LiveAdapter } from "./live/adapter.js";
 import { M4lRegistry } from "./m4l/registry.js";
@@ -53,7 +53,7 @@ export function activate(activation: ActivationContext) {
         activity.last = { at: Date.now(), what };
       },
       log,
-      makeServer: () => createServer({ live, registry, bridge, changes, version: VERSION, log, userLibrary: config.userLibrary }),
+      makeServer: () => createServer({ live, registry, bridge, changes, version: VERSION, log, userLibrary: config.userLibrary, readOnly: config.readOnly }),
       health: () => ({ version: VERSION, tracks: live.song.tracks.length, knownDevices: registry.files().length }),
     });
 
@@ -63,6 +63,7 @@ export function activate(activation: ActivationContext) {
         version: VERSION,
         url: `http://127.0.0.1:${config.port}/mcp`,
         token: config.token,
+        readOnly: config.readOnly,
         bridge: (await bridge.ping()) ? "reachable" : "not reachable",
         maxForLive: { known: registry.files().length, via: registry.via, errors: registry.errors },
         lastRequest: activity.last && { secondsAgo: (Date.now() - activity.last.at) / 1000, what: activity.last.what },
@@ -72,6 +73,11 @@ export function activate(activation: ActivationContext) {
       });
       const action = parseStatusAction(await context.ui.showModalDialog(statusDialogUrl(html), 620, 470));
       if (action.action === "close") return;
+      if (action.action === "read_only_on" || action.action === "read_only_off") {
+        setReadOnly(config, action.action === "read_only_on", log);
+        log(`read-only mode turned ${config.readOnly ? "on" : "off"} from the status dialog`);
+        return showStatus(config.readOnly ? "Read-only on. Assistants can look at the set but not change it." : "Read-only off. Assistants can change the set again.");
+      }
       setToken(config, action.action === "token_on", log);
       log(`token turned ${config.token ? "on" : "off"} from the status dialog`);
       return showStatus(

@@ -14,6 +14,7 @@ const base: StatusState = {
   version: "9.9.9",
   url: "http://127.0.0.1:9871/mcp",
   token: "",
+  readOnly: false,
   bridge: "not reachable",
   maxForLive: { known: 4, via: "bridge", errors: [] },
   requests: 0,
@@ -27,6 +28,8 @@ test("the status page says what runs, offers the token switch that fits, and esc
   assert.match(off, /not reachable: unzip LiveRemote/);
   assert.match(off, /4 devices known, read through the bridge/);
   assert.match(off, /send\('token_on'\)/);
+  assert.match(off, /send\('read_only_on'\)/);
+  assert.match(statusHtml({ ...base, readOnly: true }), /read-only: assistants can look .*send\('read_only_off'\)/);
   assert.doesNotMatch(off, /send\('token_off'\)/);
   assert.match(off, /code --add-mcp &#39;\{&quot;name&quot;:&quot;live&quot;\}&#39;/, "connect lines are escaped");
 
@@ -40,6 +43,7 @@ test("the status page says what runs, offers the token switch that fits, and esc
 test("the dialog's answer becomes an action; anything unexpected closes", () => {
   assert.deepEqual(parseStatusAction(JSON.stringify({ action: "token_on" })), { action: "token_on" });
   assert.deepEqual(parseStatusAction(JSON.stringify({ action: "token_off" })), { action: "token_off" });
+  assert.deepEqual(parseStatusAction(JSON.stringify({ action: "read_only_on" })), { action: "read_only_on" });
   assert.deepEqual(parseStatusAction(JSON.stringify({ action: "rm -rf" })), { action: "close" });
   assert.deepEqual(parseStatusAction("not json"), { action: "close" });
   assert.deepEqual(parseStatusAction(undefined), { action: "close" });
@@ -68,5 +72,39 @@ test("switching the token on and off saves it, rewrites connect.txt, and the run
   } finally {
     server.close();
     fs.rmSync(dir, { recursive: true });
+  }
+});
+
+test("in read-only mode clients get only the tools that read, and are told why", async () => {
+  const { initialize } = await import("@ableton-extensions/sdk");
+  const { smallSet } = await import("./fake-host.js");
+  const { LiveAdapter } = await import("../src/live/adapter.js");
+  const { M4lRegistry } = await import("../src/m4l/registry.js");
+  const { Bridge } = await import("../src/bridge/client.js");
+  const { ChangeTracker } = await import("../src/live/changes.js");
+  const { createServer } = await import("../src/mcp/server.js");
+  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+  const { StreamableHTTPClientTransport } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+  const live = new LiveAdapter(initialize(smallSet().activation(), "1.0.0"));
+  const deps = { live, registry: new M4lRegistry({ directories: [] }), bridge: new Bridge({ port: 1 }), changes: new ChangeTracker(live), version: "t", log: quiet };
+  let readOnly = true;
+  const server = startHttp({ port: 0, log: quiet, makeServer: () => createServer({ ...deps, readOnly }) });
+  await new Promise((r) => server.once("listening", r));
+  const url = new URL(`http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`);
+  try {
+    const c = new Client({ name: "t", version: "0" });
+    await c.connect(new StreamableHTTPClientTransport(url));
+    const names = (await c.listTools()).tools.map((t) => t.name);
+    assert.ok(names.includes("get_set") && names.includes("list_parameters"));
+    assert.ok(!names.includes("set_parameters") && !names.includes("delete_track") && !names.includes("transport"));
+    assert.match(c.getInstructions() ?? "", /read-only/);
+    await c.close();
+    readOnly = false;
+    const c2 = new Client({ name: "t", version: "0" });
+    await c2.connect(new StreamableHTTPClientTransport(url));
+    assert.ok((await c2.listTools()).tools.some((t) => t.name === "set_parameters"), "turning it off applies to the next connection");
+    await c2.close();
+  } finally {
+    server.close();
   }
 });
