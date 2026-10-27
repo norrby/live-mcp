@@ -10,6 +10,31 @@ outside tools. Live MCP is such a tool, and the thing it operates is your Live s
 
 Not affiliated with or endorsed by Ableton. Use at your own risk.
 
+## How it fits together
+
+Four things take part: your **assistant**, the **Live MCP extension**, the **open set** in Live, and the optional
+**LiveRemote bridge**.
+
+- **The assistant** runs on your computer and sends requests to Live MCP, such as "list the parameters of this
+  device" or "create a clip with these notes".
+- **Live MCP** runs inside Live as an extension. It answers the requests and changes the set through Live's
+  extension API.
+- **LiveRemote** is a small script that also runs inside Live. It reaches what the extension API does not:
+  routing, transport, selection, undo and the browser. Live MCP passes those requests on to it.
+
+```mermaid
+flowchart LR
+  a["assistant<br/>(Claude Code, Copilot)"] -- "requests" --> ext["Live MCP<br/>(extension)"]
+  ext -- "extension API" --> set["the open set"]
+  ext -. "routing, transport,<br/>browser, undo" .-> br["LiveRemote<br/>(optional bridge)"]
+  br -. "Python API" .-> set
+  classDef live stroke-width:3px
+  class ext,set,br live
+```
+
+The boxes with a thick border are inside Live. The dotted path is there only when the bridge is installed. How
+each part works is in [docs/architecture.md](docs/architecture.md).
+
 ## Features
 
 - **Read the set:** tracks, return tracks, the main track, devices, rack chains, every parameter with its range,
