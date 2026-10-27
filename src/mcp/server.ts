@@ -811,8 +811,8 @@ export function createServer(deps: ServerDeps): McpServer {
       if (late.length) throw new LiveError(`times must lie within the clip, 0..${end} beats; not ${late.map((l) => l.time).join(", ")}`);
       const events = [...points].sort((a, b) => a.time - b.time).map((pt) => (pt.curve ? [pt.time, pt.value, pt.curve.x1, pt.curve.y1, pt.curve.x2, pt.curve.y2] : [pt.time, pt.value]));
       const result = await bridge.call<{ name: string; events: number[][] }>("set_clip_envelope", [c.trackIndex, c.slotIndex, ref, events], { replace });
-      const written = new Set(events.map((e) => e[1]));
-      const converted = result.events.some((e) => ![...written].some((v) => Math.abs(v - e[1]) < 1e-6));
+      // Only the points just written count: with replace false the envelope also holds older ones.
+      const converted = events.some(([time, value]) => result.events.some((e) => Math.abs(e[0] - time) < 1e-6 && Math.abs(e[1] - value) > 1e-6));
       return {
         clip: c.address, parameter, name: result.name, points: result.events.length,
         ...(converted && { note: `Live stores ${p.name} in its own unit (such as Hz or linear gain); get_clip_automation shows those values, set_clip_automation still takes ${p.min}..${p.max}` }),
