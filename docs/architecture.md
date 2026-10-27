@@ -40,8 +40,8 @@ The boxes with a thick border are inside Live.
 Between the assistant and Live, the extension does five jobs: **Receive**, **Answer**, **Reach**, **Bridge** and
 **Recognise**.
 
-- **Receive:** an HTTP server takes each request, checks that it comes from this computer and carries the token,
-  and hands the MCP messages on.
+- **Receive:** an HTTP server takes each request, checks that it comes from this computer (and carries the token,
+  if one is set), and hands the MCP messages on.
 - **Answer:** the *MCP server* knows the tools: their names, their arguments and what each one does. It runs the
   tool and turns the result, or the error, into an answer the assistant can read.
 - **Reach:** the *adapter* is the only part that touches the SDK. It finds objects by address, reads them, and
@@ -75,7 +75,7 @@ Each job lives in its own folder under `src/`:
 | Receive | `src/mcp/transport.ts` |
 | Answer | `src/mcp/server.ts` (the tools), `src/mcp/capabilities.ts` (what can and cannot be done) |
 | Reach | `src/live/adapter.ts`, `src/live/address.ts`, `src/live/errors.ts`, `src/live/changes.ts` (noticing edits) |
-| Bridge | `src/bridge/client.ts`, and on the other side `remote/LiveRemote/LiveRemote.py` |
+| Bridge | `src/bridge/client.ts`, `src/bridge/install.ts` (puts LiveRemote in place), and on the other side `remote/LiveRemote/LiveRemote.py` |
 | Recognise | `src/m4l/amxd.ts` (reads one file), `src/m4l/registry.ts` (knows them all) |
 
 `src/extension.ts` is where Live starts the extension. It reads the configuration (`src/config.ts`), creates one
@@ -144,6 +144,10 @@ arguments. The answer is one line back.
 
 - **Fixed commands:** every command is a method `cmd_<name>` in `LiveRemote.py` with fixed arguments. A command
   that does not exist is refused; nothing sent over the socket is run as code.
+- **Installing:** the extension carries LiveRemote's two Python files inside its own bundle. On every start it
+  writes them to `Remote Scripts/LiveRemote/` in the User Library and leaves a marker file there; later starts
+  update a folder that has the marker and leave any other LiveRemote folder alone. Picking LiveRemote as a Control
+  Surface in Live's settings is the one step no API can do.
 - **The token:** LiveRemote creates `.liveremote-token` in its own folder on its first start, readable only by
   you. The extension reads the same file (`bridge.tokenFile` in its configuration) and sends the token with every
   call.
@@ -227,8 +231,9 @@ added.
 Safety is in three places: who may connect, what a call may do, and how a change can be taken back.
 
 - **Who may connect:** the HTTP server listens on `127.0.0.1` only and refuses a request whose Host or Origin is
-  not this computer. Every request must carry the token from `config.json`. With the token set to `""` any local
-  program may connect, but a request with an Origin header, which every web page sends, is refused.
+  not this computer. By default there is no token: any program on this computer may connect, as with an MCP server
+  a client starts itself, but a request with an Origin header, which every web page sends, is refused. With a
+  token set in `config.json`, every request must carry it.
 - **What a call may do:** each tool checks its arguments against a schema before anything happens. The bridge only
   runs its fixed commands. Neither runs code it is sent.
 - **Taking it back:** changes go through Live's undo. Several parameters in one call, or a clip and its notes, form
@@ -236,8 +241,9 @@ Safety is in three places: who may connect, what a call may do, and how a change
 
 ## 10. How it is built and run
 
-The build turns `src/` into one file, `dist/extension.js`, with esbuild. The SDK and every other dependency are
-bundled into that file, because the Extension Host loads one file and no `node_modules`. `npm run package` builds
+The build turns `src/` into one file, `dist/extension.js`, with esbuild. The SDK, every other dependency and the
+text of LiveRemote's Python files are bundled into that file, because the Extension Host loads one file and no
+`node_modules`. `npm run package` builds
 a minified version and packs it with `manifest.json` into a `.ablx` file, the format Live installs.
 
 While developing, `npm run host` (`tools/host.mjs`) starts Live's own Extension Host with this project as its
