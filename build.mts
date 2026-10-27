@@ -16,6 +16,7 @@ await esbuild.build({
   define: { global: "globalThis", __VERSION__: JSON.stringify(manifest.version) },
   sourcesContent: false,
   logLevel: "info",
+  loader: { ".py": "text" },
   minify: production,
   sourcemap: !production,
 });

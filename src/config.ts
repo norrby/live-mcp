@@ -1,6 +1,7 @@
 // config.ts – port, bearer token, Max for Live search folders and the LiveRemote bridge. Kept in Live's storage
 // directory for the extension; in dev mode (no storage directory) in local/config.json next to the project.
-// Missing keys get defaults written back; the token is generated once and printed in the host log.
+// Missing keys get defaults written back. A new config has no token: the server is reachable from this computer only
+// and refuses browsers, which is what a stdio MCP server offers too; a token can be set for more.
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -13,11 +14,22 @@ export interface Config {
   /** folders searched (recursively) for .amxd files, to recognise Max for Live devices in the set */
   amxdDirectories: string[];
   bridge: { port: number; tokenFile?: string; token?: string };
+  /** Live's User Library: presets are searched there, and the LiveRemote bridge is installed there */
+  userLibrary: string;
   file: string;
 }
 
 export const DEFAULT_PORT = 9871;
 export const DEFAULT_BRIDGE_PORT = 9870;
+
+/** Where Live keeps the User Library unless the user moved it. */
+export function defaultUserLibrary(home = os.homedir(), platform = process.platform): string {
+  return path.join(home, platform === "win32" ? "Documents" : "Music", "Ableton", "User Library");
+}
+
+export function remoteScriptDirectory(userLibrary: string): string {
+  return path.join(userLibrary, "Remote Scripts", "LiveRemote");
+}
 
 export function loadConfig(storageDirectory: string | undefined, log: (...a: unknown[]) => void): Config {
   const dir = storageDirectory ?? path.join(__dirname, "..", "local");
@@ -30,11 +42,15 @@ export function loadConfig(storageDirectory: string | undefined, log: (...a: unk
   }
   let changed = false;
   if (typeof data.port !== "number") (data.port = DEFAULT_PORT), (changed = true);
-  // An explicit "" turns authentication off (loopback Host/Origin checks remain); anything else that is not a string is replaced.
-  if (typeof data.token !== "string" || (data.token !== "" && data.token.length < 16)) (data.token = randomBytes(24).toString("base64url")), (changed = true);
-  if (!Array.isArray(data.amxdDirectories)) (data.amxdDirectories = [path.join(os.homedir(), "Music", "Ableton", "User Library", "Presets")]), (changed = true);
+  // "" (the default) means no authentication; the loopback Host/Origin checks remain. A token shorter than 16
+  // characters shows that one is wanted but is too weak, so a strong one replaces it.
+  if (typeof data.token !== "string") (data.token = ""), (changed = true);
+  else if (data.token !== "" && data.token.length < 16) (data.token = randomBytes(24).toString("base64url")), (changed = true);
+  if (typeof data.userLibrary !== "string" || !data.userLibrary) (data.userLibrary = defaultUserLibrary()), (changed = true);
+  if (!Array.isArray(data.amxdDirectories)) (data.amxdDirectories = [path.join(data.userLibrary, "Presets")]), (changed = true);
   if (!data.bridge || typeof data.bridge !== "object") (data.bridge = { port: DEFAULT_BRIDGE_PORT }), (changed = true);
   if (typeof data.bridge.port !== "number") (data.bridge.port = DEFAULT_BRIDGE_PORT), (changed = true);
+  if (!data.bridge.token && !data.bridge.tokenFile) (data.bridge.tokenFile = path.join(remoteScriptDirectory(data.userLibrary), ".liveremote-token")), (changed = true);
   if (changed) {
     const { file: _f, ...toWrite } = data as Config;
     try {
@@ -48,19 +64,22 @@ export function loadConfig(storageDirectory: string | undefined, log: (...a: unk
   return { ...(data as Config), file };
 }
 
-/** The text a user pastes to connect a client: a Claude Code command and a VS Code (Copilot) mcp.json entry. */
+/** The text a user pastes to connect a client: a Claude Code command and a VS Code (Copilot) command and mcp.json entry. */
 export function connectText(config: Pick<Config, "port" | "token">): string {
   const url = `http://127.0.0.1:${config.port}/mcp`;
   const auth = config.token ? ` --header "Authorization: Bearer ${config.token}"` : "";
   const headers = config.token ? `, "headers": { "Authorization": "Bearer ${config.token}" }` : "";
   return [
     `# Live MCP is listening on ${url}`,
-    config.token ? "" : "# Authentication is off (token is \"\" in config.json): any local program can use it; requests with an Origin header (browsers) are refused.",
+    config.token ? "" : "# No token: programs on this computer can connect; web pages cannot.",
     "",
     "## Claude Code",
     `claude mcp add -s user --transport http live ${url}${auth}`,
     "",
-    "## VS Code / GitHub Copilot (.vscode/mcp.json or the user mcp.json)",
+    "## VS Code / GitHub Copilot",
+    `code --add-mcp '{"name":"live","type":"http","url":"${url}"${headers}}'`,
+    "",
+    "## or by hand in .vscode/mcp.json or the user mcp.json",
     `{ "servers": { "live": { "type": "http", "url": "${url}"${headers} } } }`,
     "",
   ].filter((line, i, all) => line !== "" || all[i - 1] !== "").join("\n");
