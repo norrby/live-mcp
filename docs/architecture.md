@@ -75,7 +75,7 @@ Each job lives in its own folder under `src/`:
 | Receive | `src/mcp/transport.ts` |
 | Answer | `src/mcp/server.ts` (the tools), `src/mcp/capabilities.ts` (what can and cannot be done) |
 | Reach | `src/live/adapter.ts`, `src/live/address.ts`, `src/live/errors.ts`, `src/live/changes.ts` (noticing edits) |
-| Bridge | `src/bridge/client.ts`, `src/bridge/install.ts` (puts LiveRemote in place), and on the other side `remote/LiveRemote/LiveRemote.py` |
+| Bridge | `src/bridge/client.ts`, and on the other side `remote/LiveRemote/LiveRemote.py` |
 | Recognise | `src/m4l/amxd.ts` (reads one file), `src/m4l/registry.ts` (knows them all) |
 
 `src/extension.ts` is where Live starts the extension. It reads the configuration (`src/config.ts`), creates one
@@ -139,18 +139,19 @@ may still happen.
 ## 6. The bridge
 
 The bridge involves two programs: the **bridge client** in the extension and the **LiveRemote** script in Live.
-They talk over a socket on `127.0.0.1:9870`, one line of JSON per call: a token, a command name and its
-arguments. The answer is one line back.
+They talk over a socket on `127.0.0.1:9870`, one line of JSON per call: a command name and its arguments. The
+answer is one line back.
 
 - **Fixed commands:** every command is a method `cmd_<name>` in `LiveRemote.py` with fixed arguments. A command
   that does not exist is refused; nothing sent over the socket is run as code.
-- **Installing:** the extension carries LiveRemote's two Python files inside its own bundle. On every start it
-  writes them to `Remote Scripts/LiveRemote/` in the User Library and leaves a marker file there; later starts
-  update a folder that has the marker and leave any other LiveRemote folder alone. Picking LiveRemote as a Control
-  Surface in Live's settings is the one step no API can do.
-- **The token:** LiveRemote creates `.liveremote-token` in its own folder on its first start, readable only by
-  you. The extension reads the same file (`bridge.tokenFile` in its configuration) and sends the token with every
-  call.
+- **Only our protocol:** LiveRemote closes a connection at the first line that is not a JSON object. A web page
+  can only send HTTP, whose first line never is, so a web page never reaches a command.
+- **Installing:** the user unzips LiveRemote into `Remote Scripts/` in the User Library and picks it as a Control
+  Surface in Live's settings. The extension cannot do it, because it may not write outside its own folder, and no
+  API reaches Live's settings.
+- **No token by default:** LiveRemote listens on this computer only, like the MCP server, so a token would keep
+  out only programs that could use the MCP server anyway. A user who wants one puts it in `.liveremote-token`
+  next to `LiveRemote.py` and in the extension's configuration.
 - **The main thread:** Live allows changes to the set only from its own main thread. LiveRemote's socket runs in a
   thread of its own, so it puts each call in a queue. A function that Live calls on its main thread about ten
   times a second empties the queue, runs the commands and hands back the answers.
@@ -167,8 +168,8 @@ sequenceDiagram
 
   M->>M: note the ids of track 0's devices
   M->>B: add_device(0, "My Synth.adv")
-  B->>T: {"token", "cmd": "add_device", "args"}
-  T->>T: token right?
+  B->>T: {"cmd": "add_device", "args": [0, "My Synth.adv"]}
+  T->>T: a JSON object?
   T->>Q: queue the call
   Q->>S: find the item in the browser, select track 0, load it
   Q-->>T: devices before and after
@@ -194,7 +195,9 @@ Recognising involves the **`.amxd` reader**, the **registry** and the **fingerpr
   parameters in the order Live shows them: Live's own "Device On" first, then the visible parameters sorted by
   long name.
 - **The registry** (`registry.ts`) reads every `.amxd` file in the configured folders, and reads a file again only
-  when it has changed.
+  when it has changed. An installed extension may not read those folders, so then the registry asks the bridge to
+  list and read the files instead (the commands `amxd_list` and `amxd_read`, which read `.amxd` files and nothing
+  else). That happens in the background, so a device is recognised from the next call after the files arrive.
 - **The fingerprint** is the list of short names in that order. When a tool shows a device, the registry compares
   the device's names in Live with every file's fingerprint. Exactly one match means the device is recognised.
 
@@ -235,16 +238,17 @@ Safety is in three places: who may connect, what a call may do, and how a change
   a client starts itself, but a request with an Origin header, which every web page sends, is refused. With a
   token set in `config.json`, every request must carry it.
 - **What a call may do:** each tool checks its arguments against a schema before anything happens. The bridge only
-  runs its fixed commands. Neither runs code it is sent.
+  runs its fixed commands, and only for a line of JSON, never for a web page's request. Neither runs code it is
+  sent.
 - **Taking it back:** changes go through Live's undo. Several parameters in one call, or a clip and its notes, form
   one undo step.
 
 ## 10. How it is built and run
 
-The build turns `src/` into one file, `dist/extension.js`, with esbuild. The SDK, every other dependency and the
-text of LiveRemote's Python files are bundled into that file, because the Extension Host loads one file and no
-`node_modules`. `npm run package` builds
-a minified version and packs it with `manifest.json` into a `.ablx` file, the format Live installs.
+The build turns `src/` into one file, `dist/extension.js`, with esbuild. The SDK and every other dependency are
+bundled into that file, because the Extension Host loads one file and no `node_modules`. `npm run package` builds
+a minified version and packs it with `manifest.json` into a `.ablx` file, the format Live installs, and zips the
+LiveRemote folder next to it.
 
 While developing, `npm run host` (`tools/host.mjs`) starts Live's own Extension Host with this project as its
 extension, so a change needs only a new build and a restart of the host, not of Live.
@@ -280,6 +284,10 @@ Some choices above look odd until you know what happened.
   globals touched one that made the whole process abort.
 - **`tools/host.mjs` instead of Ableton's CLI.** The CLI gives the Extension Host ten seconds to connect, and a
   first start often takes longer, so the CLI killed it. The script starts the host without that limit.
+- **Files go through the bridge or through Live.** An installed extension may read and write only its own
+  folders. The development host has no such limit, so this showed only when the first `.ablx` was installed: the
+  bridge's token file, the `.amxd` files and the Remote Scripts folder were all out of reach. Now the bridge needs
+  no token and reads the `.amxd` files, Live imports audio files, and the user installs the bridge.
 - **No External Instrument routing.** The MIDI To and Audio From of Live's External Instrument are not in the
   Extensions SDK, and the Python object behind the device has no routing at all; only Max for Live devices expose
   routing points. A preset saved from Live's window keeps the routing, so the way is a preset loaded through the

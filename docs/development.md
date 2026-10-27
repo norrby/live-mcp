@@ -46,7 +46,7 @@ on its first start, and `connect.txt` next to it with the commands that connect 
   "token": "",
   "userLibrary": "/Users/you/Music/Ableton/User Library",
   "amxdDirectories": ["/Users/you/Music/Ableton/User Library/Presets"],
-  "bridge": { "port": 9870, "tokenFile": "/Users/you/Music/Ableton/User Library/Remote Scripts/LiveRemote/.liveremote-token" }
+  "bridge": { "port": 9870 }
 }
 ```
 
@@ -57,15 +57,22 @@ on its first start, and `connect.txt` next to it with the commands that connect 
 | `userLibrary` | Live's User Library; set it if you moved yours |
 | `amxdDirectories` | folders searched for `.amxd` files, to recognise Max for Live devices in the set |
 | `bridge.port` | the port LiveRemote listens on |
-| `bridge.tokenFile` | the token file LiveRemote writes in its folder |
+| `bridge.token`, `bridge.tokenFile` | only if you gave LiveRemote a token: the token, or a file that holds it |
 
 **A token.** Without one, any program on this computer can use Live MCP, as with any MCP server that runs locally;
 web pages and other computers cannot. To require a token, set `token` to a string of at least 16 characters
 (anything shorter is replaced by a generated one) and restart. `connect.txt` then holds the commands with the token
 in them.
 
-**The bridge.** On every start the extension writes LiveRemote to `Remote Scripts/LiveRemote/` in the User Library,
-and keeps it up to date. A LiveRemote folder it did not write itself, such as one you copied there, is left alone.
+**The bridge.** LiveRemote is installed by hand (see the README); `npm run package` writes `release/LiveRemote.zip`
+next to the `.ablx`. It needs no token. To require one, put it in a file `.liveremote-token` next to
+`LiveRemote.py` and give the same token to the extension as `bridge.token`; an installed extension cannot read
+files outside its own folder, so `bridge.tokenFile` works only while developing.
+
+**File access.** Live lets an installed extension read and write only its own storage and temp folders. The
+development host has no such limit, so check anything that touches files with an installed `.ablx`. The `.amxd`
+files are therefore read through the bridge when the extension is installed, and audio files are imported into
+the project through Live before a clip is made from them.
 
 ## Tools
 

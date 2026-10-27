@@ -27,9 +27,22 @@ You need **Live 12 Suite**, version 12.4.15 or later. Extensions are in Ableton'
 
 That's it. Ask your assistant *"What's in my Live set?"* to try it.
 
-**Optional, for more:** in Live's **Settings → Link, Tempo & MIDI**, pick **LiveRemote** as a Control Surface. The
-extension has put it there for you. It lets the assistant also start and stop playback, undo, change routing, and
-load presets and plug-ins.
+### Optional: the LiveRemote bridge
+
+Live does not let extensions do everything. A small helper script, LiveRemote, lets the assistant also start and
+stop playback, undo, change routing, load presets and plug-ins, and read the full parameter names of Max for Live
+devices.
+
+1. Download `LiveRemote.zip` from the same release.
+2. Unzip it into the **Remote Scripts** folder of your User Library, so that you get a folder called `LiveRemote`
+   there. Create Remote Scripts if it is missing.
+   - Mac: `~/Music/Ableton/User Library/Remote Scripts/`
+   - Windows: `Documents\Ableton\User Library\Remote Scripts\`
+3. Restart Live.
+4. In **Settings → Link, Tempo & MIDI**, pick **LiveRemote** as a Control Surface, with Input and Output set to
+   None.
+
+Ask your assistant *"Can you reach the LiveRemote bridge?"* to check.
 
 ## What you can ask
 
