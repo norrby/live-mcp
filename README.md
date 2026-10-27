@@ -6,7 +6,8 @@ watch.
 
 ## Install
 
-You need Ableton Live 12.4.15 or later.
+You need **Live 12 Suite**, version 12.4.15 or later. Extensions are in Ableton's
+[public beta](https://ableton.github.io/extensions-sdk/) for now, and only in Suite.
 
 1. Download the `.ablx` file from the [latest release](https://github.com/norrby/live-mcp/releases/latest).
 2. In Live, open **Settings → Extensions** and drag the file there.

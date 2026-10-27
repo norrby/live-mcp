@@ -5,10 +5,10 @@ Building Live MCP yourself, configuring it, and the full list of tools. How it w
 
 ## Requirements
 
-- Ableton Live 12.4.15 or later, with Developer Mode on (Settings → Extensions) while developing.
+- Live 12 Suite 12.4.15 or later, with Developer Mode on (Settings → Extensions) while developing.
 - Node 24.14.1 or later.
-- The Ableton Extensions SDK and CLI. Ableton distributes them and they may not be redistributed, so they are not
-  in this repository. Put the two packages in `vendor/` (`ableton-extensions-sdk-1.0.0-beta.1.tgz` and
+- The Ableton Extensions SDK and CLI, from Ableton's [public beta](https://ableton.github.io/extensions-sdk/).
+  They may not be redistributed, so they are not in this repository. Put the two packages in `vendor/` (`ableton-extensions-sdk-1.0.0-beta.1.tgz` and
   `ableton-extensions-cli-1.0.0-beta.1.tgz`, as `package.json` names them) before `npm install`.
 
 ## Build and run
