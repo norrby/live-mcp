@@ -17,6 +17,7 @@ export interface Measurement {
   /** integrated loudness; -Infinity (reported as null) when everything is below the absolute gate */
   lufs: number | null;
   clippedSamples: number;
+  /** nothing above -80 dBFS at any moment */
   silent: boolean;
   /** RMS in dBFS for equal slices of the range, all channels together */
   envelopeDbfs: number[];
@@ -190,7 +191,7 @@ export function measure(audio: Audio, slices = 32): Measurement {
     rmsDbfs: rms,
     lufs: Number.isFinite(lufs) ? round(lufs) : null,
     clippedSamples: clipped,
-    silent: rms.every((r) => !(r > -60)),
+    silent: peak.every((p) => !(p > -80)),
     envelopeDbfs: envelope,
   };
 }

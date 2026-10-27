@@ -377,3 +377,11 @@ test("import_midi_file describes a file, and puts the chosen part into a clip as
   await call(c, "delete_clip", { clips: [made.address, all.id] });
   await c.close();
 });
+
+test("deleting a rack together with a device inside it deletes the rack once, without failing half way", async () => {
+  const c = await client();
+  const r = await call(c, "delete_device", { devices: ["t1/d0/c0/d0", "t1/d0"] });
+  assert.ok(r.ok, String(r.data));
+  assert.equal(r.data.deleted, "Audio Effect Rack");
+  await c.close();
+});

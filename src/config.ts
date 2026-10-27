@@ -75,27 +75,30 @@ export function connectLines(config: Pick<Config, "port" | "token">): { claudeCo
 }
 
 /** Writes one key of config.json, keeping the others as they are on disk. */
-function saveKey(config: Config, key: "token" | "readOnly", log: (...a: unknown[]) => void): void {
+function saveKey(config: Config, key: "token" | "readOnly", log: (...a: unknown[]) => void): boolean {
   try {
     const data = JSON.parse(fs.readFileSync(config.file, "utf8")) as Record<string, unknown>;
     data[key] = config[key];
     fs.writeFileSync(config.file, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
+    return true;
   } catch (e) {
     log(`cannot save ${key} in ${config.file}: ${String(e)}`);
+    return false;
   }
 }
 
 /** Turns the token on (a new random one) or off, in memory and in config.json, and rewrites connect.txt. */
-export function setToken(config: Config, on: boolean, log: (...a: unknown[]) => void): void {
+export function setToken(config: Config, on: boolean, log: (...a: unknown[]) => void): boolean {
   config.token = on ? randomBytes(24).toString("base64url") : "";
-  saveKey(config, "token", log);
+  const saved = saveKey(config, "token", log);
   writeConnectFile(config, log);
+  return saved;
 }
 
 /** Turns read-only mode on or off, in memory and in config.json; the next request already follows it. */
-export function setReadOnly(config: Config, on: boolean, log: (...a: unknown[]) => void): void {
+export function setReadOnly(config: Config, on: boolean, log: (...a: unknown[]) => void): boolean {
   config.readOnly = on;
-  saveKey(config, "readOnly", log);
+  return saveKey(config, "readOnly", log);
 }
 
 /** The text a user pastes to connect a client: a Claude Code command and a VS Code (Copilot) command and mcp.json entry. */

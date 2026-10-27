@@ -225,6 +225,30 @@ export class LiveAdapter {
       device = rack;
     }
   }
+  /** The racks a device sits in, innermost first. */
+  deviceAncestors(device: Device<V>): Device<V>[] {
+    const out: Device<V>[] = [];
+    let holder = device.parent;
+    while (holder instanceof Chain) {
+      const rack = holder.parent;
+      if (!(rack instanceof RackDevice)) break;
+      out.push(rack);
+      holder = rack.parent;
+    }
+    return out;
+  }
+
+  /** The group tracks a track sits in, innermost first; none where Live cannot tell. */
+  groupAncestors(track: Track<V>): Track<V>[] {
+    const out: Track<V>[] = [];
+    try {
+      for (let g = track.groupTrack; g; g = g.groupTrack) out.push(g);
+    } catch {
+      // not answered by this host
+    }
+    return out;
+  }
+
   trackAddress(t: Track<V>): string {
     const song = this.song;
     let i = song.tracks.indexOf(t);

@@ -74,16 +74,20 @@ export function activate(activation: ActivationContext) {
       const action = parseStatusAction(await context.ui.showModalDialog(statusDialogUrl(html), 620, 470));
       if (action.action === "close") return;
       if (action.action === "read_only_on" || action.action === "read_only_off") {
-        setReadOnly(config, action.action === "read_only_on", log);
+        const saved = setReadOnly(config, action.action === "read_only_on", log);
         log(`read-only mode turned ${config.readOnly ? "on" : "off"} from the status dialog`);
-        return showStatus(config.readOnly ? "Read-only on. Assistants can look at the set but not change it." : "Read-only off. Assistants can change the set again.");
+        return showStatus(
+          (config.readOnly ? "Read-only on. Assistants can look at the set but not change it." : "Read-only off. Assistants can change the set again.") +
+            (saved ? "" : " It could not be saved, so it lasts only until Live restarts."),
+        );
       }
-      setToken(config, action.action === "token_on", log);
+      const saved = setToken(config, action.action === "token_on", log);
       log(`token turned ${config.token ? "on" : "off"} from the status dialog`);
       return showStatus(
-        config.token
+        (config.token
           ? "Token on. Connected assistants must be connected again with the new lines below."
-          : "Token off. Assistants connected with a token keep working; the token is simply no longer checked.",
+          : "Token off. Assistants connected with a token keep working; the token is simply no longer checked.") +
+          (saved ? "" : " It could not be saved, so it lasts only until Live restarts."),
       );
     };
     context.commands.registerCommand("live-mcp.status", () => {

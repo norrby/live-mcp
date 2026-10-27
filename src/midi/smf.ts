@@ -51,6 +51,7 @@ export function parseMidi(buf: Buffer): MidiFile {
   const tracks = buf.readUInt16BE(10);
   const division = buf.readUInt16BE(12);
   if (division & 0x8000) throw new Error("MIDI files timed in SMPTE frames are not supported");
+  if (division === 0) throw new Error("MIDI file with 0 ticks per beat");
   if (format > 1) throw new Error(`MIDI file format ${format} is not supported (only 0 and 1)`);
   const ticksPerBeat = division;
   let at = 8 + headerLength;

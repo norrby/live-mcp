@@ -22,7 +22,7 @@ export const INSTRUCTIONS = [
   "- Start with get_set. Addresses (t0, t0/d1, t0/d1/p3, t0/s0, t0/a0) are positions and shift when things move; keep the #id a create answers with.",
   "- Before driving a Max for Live device, read list_parameters: m4l.about is its author's own instructions, follow them. Parameters under m4l.askFirst change only when the user asked for that very action; never set userAsked on your own.",
   "- When one parameter decides what others edit (a step, page or mode selector), set it in a call of its own first.",
-  "- Each call is one undo step, so put related changes in one call. Live's undo (Cmd/Ctrl+Z) takes back a whole call.",
+  "- Each call is one undo step, so put related changes in one call; Live's undo (Cmd/Ctrl+Z) takes back a whole call. The exception: a new clip that also gets notes or a name takes two steps (the clip, then its contents).",
   "- A track that has played a session clip ignores its arrangement clips until transport back_to_arrangement.",
   "- Live sends no events: get_changes tells what the user changed since you last looked.",
   "- get_capabilities says what works now, what needs the LiveRemote bridge, and what no API in Live allows. When something cannot be done, tell the user instead of working around it.",
@@ -32,14 +32,19 @@ const READ_ONLY_NOTE =
   "- The user has set Live MCP to read-only: you can look at the set but change nothing. If the user asks for a change, say that read-only mode is on and can be turned off under Live MCP status… in the right-click menu of a track or scene.";
 
 const READ_ONLY = new Set(["get_set", "get_capabilities", "list_parameters", "find_parameters", "get_parameters", "get_changes", "browse", "get_scenes", "get_clips", "get_notes", "get_routing", "get_device_routing", "get_clip_automation", "measure_audio"]);
-const DESTRUCTIVE = new Set(["delete_device", "delete_track", "delete_clip", "set_notes", "clear_clip_automation"]);
+/** Tools that change the set without removing or overwriting what is there; any other tool that writes counts as destructive. */
+const NOT_DESTRUCTIVE = new Set([
+  "set_parameters", "set_parameter_display", "set_track", "set_tempo", "set_clip", "set_routing", "set_device_routing",
+  "insert_device", "load_browser_item", "create_track", "create_clip", "create_audio_clip", "import_midi_file",
+  "transport", "selection", "scenes", "fire", "undo", "redo",
+]);
 const IDEMPOTENT = new Set(["set_parameters", "set_parameter_display", "set_track", "set_tempo", "set_clip", "set_notes", "set_routing", "set_device_routing", "set_clip_automation", "clear_clip_automation"]);
 
 /** MCP hints for a tool, from its name: what it reads, what it may destroy, whether repeating it changes anything. */
 export function annotationsFor(name: string): ToolAnnotations {
   const title = name.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
   if (READ_ONLY.has(name)) return { title, readOnlyHint: true, openWorldHint: false };
-  return { title, readOnlyHint: false, destructiveHint: DESTRUCTIVE.has(name), idempotentHint: IDEMPOTENT.has(name), openWorldHint: false };
+  return { title, readOnlyHint: false, destructiveHint: !NOT_DESTRUCTIVE.has(name), idempotentHint: IDEMPOTENT.has(name), openWorldHint: false };
 }
 
 export interface ServerDeps {
@@ -110,6 +115,16 @@ export function createServer(deps: ServerDeps): McpServer {
   };
 
   const viaBridge = " Needs the LiveRemote bridge (see get_capabilities).";
+
+  /** Names a new clip and writes its notes in one step; if that fails, the empty clip is removed again. */
+  const fillOrRemove = async (clip: { name: string }, address: string, fill: () => void) => {
+    try {
+      live.context.withinTransaction(fill);
+    } catch (e) {
+      await live.deleteClips([address]).catch(() => {});
+      throw e;
+    }
+  };
 
   /** Starts every step synchronously inside one transaction, so Live keeps them as one undo step. */
   const inOneStep = (steps: (() => Promise<unknown>)[]) => live.context.withinTransaction(() => Promise.all(steps.map((step) => step())));
@@ -381,7 +396,10 @@ export function createServer(deps: ServerDeps): McpServer {
       inputSchema: { device: address.optional(), devices: z.array(address).optional() },
     },
     guarded(async ({ device, devices }) => {
-      const found = unique(listOf(device, devices, "device")).map((a) => live.locateDevice(a));
+      const all = unique(listOf(device, devices, "device")).map((a) => live.locateDevice(a));
+      // A device inside a rack that is deleted too goes with the rack; deleting it as well would fail half way.
+      const ids = new Set(all.map((f) => live.id(f.device)));
+      const found = all.filter((f) => !live.deviceAncestors(f.device).some((d) => ids.has(live.id(d))));
       const deleted = found.map((f) => f.device.name);
       await inOneStep(found.map((f) => () => f.holder.deleteDevice(f.device)));
       return { deleted: deleted.length === 1 ? deleted[0] : deleted };
@@ -406,7 +424,12 @@ export function createServer(deps: ServerDeps): McpServer {
       inputSchema: { track: address.optional(), tracks: z.array(address).optional() },
     },
     guarded(async ({ track, tracks }) => {
-      const found = [...new Set(unique(listOf(track, tracks, "track")).map((a) => live.track(a)))];
+      const all = [...new Set(unique(listOf(track, tracks, "track")).map((a) => live.track(a)))];
+      // A track inside a group that is deleted too goes with the group.
+      const ids = new Set(all.map((t) => live.id(t)));
+      const found = all.filter((t) => !live.groupAncestors(t).some((g) => ids.has(live.id(g))));
+      const remaining = live.song.tracks.filter((t) => !found.includes(t) && !live.groupAncestors(t).some((g) => found.includes(g)));
+      if (found.some((t) => live.song.tracks.includes(t)) && remaining.length === 0) throw new LiveError("Nothing was deleted: a set keeps at least one track");
       const deleted = found.map((t) => t.name);
       await inOneStep(found.map((t) => () => live.song.deleteTrack(t)));
       return { deleted: deleted.length === 1 ? deleted[0] : deleted };
@@ -481,11 +504,9 @@ export function createServer(deps: ServerDeps): McpServer {
   const browserItemFile = async (item: string): Promise<string> => {
     const found = await bridge.call<{ uri: string } | null>("browser_uri", [item]);
     if (!found) throw new LiveError(`no item named "${item}" in Live's browser; use browse to see what exists, or give the file's path`);
-    const [where, rest = ""] = found.uri.split("#");
-    const parts = rest.split(":").map(decodeURIComponent);
-    if (where === "query:UserLibrary") return path.join(deps.userLibrary ?? path.join(process.env.HOME ?? "", "Music", "Ableton", "User Library"), ...parts);
-    if (where.startsWith("userfolder:")) return path.join(decodeURIComponent(where.slice("userfolder:".length)), ...parts);
-    throw new LiveError(`"${item}" is in ${found.uri.split(":")[1]?.split("#")[0] ?? "a Live pack"}, not a file this server can read; save it to the User Library first`);
+    const file = uriToFile(found.uri, deps.userLibrary ?? path.join(process.env.HOME ?? "", "Music", "Ableton", "User Library"));
+    if (!file) throw new LiveError(`"${item}" is not in the User Library or a folder under Places, so it is not a file this server can read; save it to the User Library first`);
+    return file;
   };
 
   /** The file's bytes: read directly while developing, through the bridge when Live's file permissions forbid it. */
@@ -531,8 +552,9 @@ export function createServer(deps: ServerDeps): McpServer {
       if (!track) return about;
       if (!midi.parts.length) throw new LiveError(`${where} has no notes`);
       let chosen = midi.parts;
-      if (part === "all") chosen = midi.parts;
-      else if (part !== undefined) chosen = midi.parts.filter((p) => p.index === part || p.name === part);
+      const wanted = typeof part === "string" && /^\d+$/.test(part) ? Number(part) : part;
+      if (wanted === "all") chosen = midi.parts;
+      else if (wanted !== undefined) chosen = midi.parts.filter((p) => p.index === wanted || p.name === part);
       else if (midi.parts.length > 1) throw new LiveError(`${where} has ${midi.parts.length} parts (${midi.parts.map((p) => `${p.index} "${p.name}"`).join(", ")}): give part, or part "all"`);
       if (!chosen.length) throw new LiveError(`no part ${JSON.stringify(part)} in ${where}; parts: ${midi.parts.map((p) => `${p.index} "${p.name}"`).join(", ")}`);
       const notes = chosen.flatMap((p) => p.notes).map((n) => ({ ...n, velocity: Math.min(127, Math.max(1, n.velocity)) }));
@@ -540,11 +562,13 @@ export function createServer(deps: ServerDeps): McpServer {
       const bar = midi.timeSignature ? (midi.timeSignature[0] * 4) / midi.timeSignature[1] : 4;
       const clipLength = length ?? Math.max(bar, Math.ceil(end / bar - 1e-9) * bar);
       const { clip, address: a } = await live.createMidiClip(track, { slot, start, length: clipLength });
-      live.context.withinTransaction(() => {
+      await fillOrRemove(clip, a, () => {
         clip.name = name ?? (chosen.length === 1 ? chosen[0].name : path.basename(where, path.extname(where)));
         clip.notes = notes;
       });
-      return { ...live.clipInfo(clip, a), from: where, parts: chosen.map((p) => p.name), notesImported: notes.length, fileBpm: midi.bpm, note: midi.bpm ? `the file is at ${midi.bpm} BPM; the set's tempo was not changed` : undefined };
+      const beyond = notes.filter((n) => n.startTime >= clipLength).length;
+      const notes2 = [midi.bpm ? `the file is at ${midi.bpm} BPM; the set's tempo was not changed` : "", beyond ? `${beyond} notes start after the clip's end and do not play; give a longer length to hear them` : ""].filter(Boolean);
+      return { ...live.clipInfo(clip, a), from: where, parts: chosen.map((p) => p.name), notesImported: notes.length, fileBpm: midi.bpm, note: notes2.length ? notes2.join("; ") : undefined };
     }),
   );
 
@@ -565,7 +589,7 @@ export function createServer(deps: ServerDeps): McpServer {
     guarded(async ({ track, slot, start, length, name, notes }) => {
       const { clip, address: a } = await live.createMidiClip(track, { slot, start, length });
       if (name !== undefined || notes) {
-        live.context.withinTransaction(() => {
+        await fillOrRemove(clip, a, () => {
           if (name !== undefined) clip.name = name;
           if (notes) clip.notes = notes;
         });
@@ -647,13 +671,14 @@ export function createServer(deps: ServerDeps): McpServer {
     {
       description:
         "Render part of an audio track's arrangement and measure it: sample peak and RMS per channel in dBFS, integrated loudness in LUFS (ITU-R BS.1770), clipped samples, whether it is silent, and a coarse loudness curve (32 slices, dBFS). Live renders the audio of the track's clips before its effects; MIDI tracks, effects and the master cannot be rendered by any API. start and end are in beats.",
-      inputSchema: { track: address, start: z.number().min(0).describe("Beats"), end: z.number().positive().describe("Beats; at most 1024 beats after start") },
+      inputSchema: { track: address, start: z.number().min(0).describe("Beats"), end: z.number().positive().describe("Beats; at most 5 minutes after start") },
     },
     guarded(async ({ track, start, end }) => {
       const t = live.track(track);
       if (!(t instanceof AudioTrack)) throw new LiveError(`${track} is not an audio track; Live can render only audio tracks, and only the audio of their clips before any effect`);
       if (end <= start) throw new LiveError("end must come after start");
-      if (end - start > 1024) throw new LiveError("render at most 1024 beats at a time");
+      const seconds = ((end - start) * 60) / live.song.tempo;
+      if (seconds > 300) throw new LiveError(`render at most 5 minutes at a time; ${Math.round(seconds)} s asked for`);
       let file: string;
       try {
         file = await live.context.resources.renderPreFxAudio(t, start, end);
@@ -661,6 +686,7 @@ export function createServer(deps: ServerDeps): McpServer {
         throw new LiveError(`Live could not render ${track} from beat ${start} to ${end}: ${e instanceof Error ? e.message : String(e)}`);
       }
       try {
+        if (fs.statSync(file).size > 200 * 1024 * 1024) throw new LiveError("the rendered file is larger than 200 MB; measure a shorter range");
         return { track, from: start, to: end, ...measure(parseAudio(fs.readFileSync(file))), note: "the track's clips before its effects" };
       } finally {
         fs.rm(file, { force: true }, () => {});
@@ -686,21 +712,11 @@ export function createServer(deps: ServerDeps): McpServer {
     return { ...found, trackIndex: bridgeTrackIndex(live, live.id(found.track)), slotIndex: found.track.clipSlots.indexOf(found.slot) };
   };
 
-  /** Our address for a parameter ref LiveRemote reports. */
-  const refAddress = (trackAddress: string, ref: { devices?: number[]; param?: number; mixer?: string; index?: number } | null) => {
-    if (!ref) return undefined;
-    if (ref.mixer === "volume") return `${trackAddress}/vol`;
-    if (ref.mixer === "panning") return `${trackAddress}/pan`;
-    if (ref.mixer === "send") return `${trackAddress}/send${ref.index}`;
-    const segs = (ref.devices ?? []).map((n, i) => (i % 2 === 0 ? `d${n}` : `c${n}`));
-    return `${trackAddress}/${segs.join("/")}/p${ref.param}`;
-  };
-
   server.registerTool(
     "get_clip_automation",
     {
       description:
-        "The automation envelopes of a session clip: each automated parameter's address and its breakpoints [time in beats, value]. The values are as Live stores them in the envelope, which for many built-in parameters is the shown unit (Hz, linear gain), not the min..max of list_parameters; write with set_clip_automation in the parameter's own units." +
+        "The automation envelopes of a session clip: each automated parameter's address and its breakpoints [time in beats, value]. Live reports these values in its envelope units, which for many built-in parameters are the shown unit (Hz, linear gain) rather than the min..max of list_parameters. set_clip_automation takes values in min..max; Live converts them." +
         viaBridge,
       inputSchema: { clip: clipAddress },
     },
@@ -858,6 +874,33 @@ export function notInLive(m: M4lDevice, deviceAddress: string): { name: string; 
         : [];
       return related.length ? { name: p.longName, seeInstead: related } : { name: p.longName };
     });
+}
+
+/** The file behind a browser item's uri: the User Library or a folder under Places; undefined for anything else. */
+export function uriToFile(uri: string, userLibrary: string): string | undefined {
+  const [where, rest = ""] = uri.split("#");
+  let parts: string[];
+  let folder: string;
+  try {
+    parts = rest.split(":").map(decodeURIComponent);
+    folder = where.startsWith("userfolder:") ? decodeURIComponent(where.slice("userfolder:".length)) : "";
+  } catch {
+    return undefined;
+  }
+  if (parts.some((p) => p === ".." || p.includes("/../"))) return undefined;
+  if (where === "query:UserLibrary") return path.join(userLibrary, ...parts);
+  if (folder) return path.join(folder, ...parts);
+  return undefined;
+}
+
+/** Our address for a parameter ref LiveRemote reports (see cmd_clip_envelopes). */
+export function refAddress(trackAddress: string, ref: { devices?: number[]; param?: number; mixer?: string; index?: number } | null): string | undefined {
+  if (!ref) return undefined;
+  if (ref.mixer === "volume") return `${trackAddress}/vol`;
+  if (ref.mixer === "panning") return `${trackAddress}/pan`;
+  if (ref.mixer === "send") return `${trackAddress}/send${ref.index}`;
+  const segs = (ref.devices ?? []).map((n, i) => (i % 2 === 0 ? `d${n}` : `c${n}`));
+  return `${trackAddress}/${segs.join("/")}/p${ref.param}`;
 }
 
 /** One address or a list of them, as a list; at least one. */
