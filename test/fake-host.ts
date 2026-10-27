@@ -29,6 +29,8 @@ export class FakeLive {
   readonly root: Id;
   readonly song: Id;
   transactions = 0;
+  /** what importIntoProject was handed: the path and, if it existed then, the file's bytes */
+  imports: { path: string; bytes?: Buffer }[] = [];
   transactionDepth = 0;
   /** value writes that happened inside a transaction, per transaction */
   writesInTransaction: number[] = [];
@@ -271,6 +273,7 @@ export class FakeLive {
   }
 
   activation(): ActivationContext {
+    const imports = this.imports;
     const api = {
       commands: { registerCommand() {}, executeCommand() {} },
       dataModel: this.dataModel(),
@@ -290,6 +293,7 @@ export class FakeLive {
           setImmediate(() => ok(file));
         },
         importIntoProject(filePath: string, ok: (p: string) => void, fail: (e: string) => void) {
+          imports.push({ path: filePath, bytes: fs.existsSync(filePath) ? fs.readFileSync(filePath) : undefined });
           if (filePath.includes("missing")) fail(`no such file: ${filePath}`);
           else ok(`/project/Samples/Imported/${filePath.split("/").pop()}`);
         },

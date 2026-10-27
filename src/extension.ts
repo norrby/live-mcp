@@ -53,7 +53,7 @@ export function activate(activation: ActivationContext) {
         activity.last = { at: Date.now(), what };
       },
       log,
-      makeServer: () => createServer({ live, registry, bridge, changes, version: VERSION, log, userLibrary: config.userLibrary, readOnly: config.readOnly }),
+      makeServer: () => createServer({ live, registry, bridge, changes, version: VERSION, log, userLibrary: config.userLibrary, readOnly: config.readOnly, ownFolders: [context.environment.tempDirectory, context.environment.storageDirectory].filter((d): d is string => Boolean(d)) }),
       health: () => ({ version: VERSION, tracks: live.song.tracks.length, knownDevices: registry.files().length }),
     });
 

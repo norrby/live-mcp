@@ -10,7 +10,7 @@ line never is), and never runs strings as code: every cmd maps to a cmd_*
 method with fixed parameters. A token is optional: when a file
 .liveremote-token next to this script holds one, every call must carry it.
 
-Commands: ping, amxd_list, amxd_read, midi_read, browser_uri, clip_envelopes, set_clip_envelope, clear_clip_envelope, lom_dir, lom_doc, reload, device_dir, tracks, devices, add_device, delete_device, create_midi_track,
+Commands: ping, amxd_list, amxd_read, midi_read, audio_read, browser_uri, clip_envelopes, set_clip_envelope, clear_clip_envelope, lom_dir, lom_doc, reload, device_dir, tracks, devices, add_device, delete_device, create_midi_track,
   transport, selection, scenes, clips, fire, undo, redo, param, param_strs, param_set_display (for the live-mcp bridge),
 create_audio_track, delete_track, rename_track, select_track, routing,
 routing_options, param, browser, log.
@@ -93,13 +93,32 @@ def _read_b64(path, endings, what):
         return base64.b64encode(f.read()).decode("ascii")
 
 
+AUDIO_ENDINGS = (".wav", ".aif", ".aiff", ".aifc", ".mp3", ".flac", ".ogg", ".m4a")
+AUDIO_MAX_BYTES = 2 * 1024 * 1024 * 1024
+AUDIO_CHUNK_MAX = 8 * 1024 * 1024
+
+
+def audio_read(path, offset=0, size=AUDIO_CHUNK_MAX):
+    """A piece of an audio file as base64, with the file's total size, so a large file comes over in several calls."""
+    path = os.path.expanduser(str(path))
+    if not path.lower().endswith(AUDIO_ENDINGS) or not os.path.isfile(path):
+        raise ValueError("not an audio file (%s): %r" % (", ".join(AUDIO_ENDINGS), path))
+    total = os.path.getsize(path)
+    if total > AUDIO_MAX_BYTES:
+        raise ValueError("%s is larger than %d bytes" % (path, AUDIO_MAX_BYTES))
+    with open(path, "rb") as f:
+        f.seek(max(0, int(offset)))
+        data = f.read(max(0, min(int(size), AUDIO_CHUNK_MAX)))
+    return {"total": total, "data": base64.b64encode(data).decode("ascii")}
+
+
 def amxd_read(path):
     """One .amxd file as base64."""
     return _read_b64(path, (".amxd",), "an .amxd file")
 
 
 def midi_read(path):
-    """One MIDI file (.mid, .midi) as base64; the bridge reads these two kinds of file and nothing else."""
+    """One MIDI file (.mid, .midi) as base64."""
     return _read_b64(path, (".mid", ".midi"), "a MIDI file")
 
 
@@ -263,6 +282,9 @@ class LiveRemote(ControlSurface):
 
     def cmd_midi_read(self, path):
         return midi_read(path)
+
+    def cmd_audio_read(self, path, offset=0, size=AUDIO_CHUNK_MAX):
+        return audio_read(path, offset, size)
 
     def cmd_browser_uri(self, name):
         """The uri and source of the first loadable browser item with this name, e.g. query:UserLibrary#Clips:x.mid."""

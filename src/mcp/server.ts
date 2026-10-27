@@ -58,6 +58,8 @@ export interface ServerDeps {
   userLibrary?: string;
   /** only the tools that read are offered */
   readOnly?: boolean;
+  /** the installed extension's temp and storage folders, the only places Live imports audio files from; none while developing */
+  ownFolders?: string[];
 }
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
@@ -600,10 +602,46 @@ export function createServer(deps: ServerDeps): McpServer {
     }),
   );
 
+  /**
+   * Live imports audio only from the installed extension's own folders, and the extension may not read files elsewhere,
+   * so a file from anywhere else comes over through the bridge into a folder of its own under the temp folder (the
+   * name stays, as Live names the clip after it). Answers with the copy's path, or undefined when no copy is needed.
+   * Live has made its own copy in the project by the time the clip exists, so the caller removes this one.
+   */
+  const stageAudio = async (file: string): Promise<string | undefined> => {
+    const [temp] = deps.ownFolders ?? [];
+    if (!temp || !path.isAbsolute(file) || deps.ownFolders!.some((d) => !path.relative(d, file).startsWith(".."))) return undefined;
+    const dir = fs.mkdtempSync(path.join(temp, "import-"));
+    const copy = path.join(dir, path.basename(file));
+    try {
+      const out = fs.openSync(copy, "w");
+      try {
+        for (let offset = 0, total = Infinity; offset < total; ) {
+          const piece = await bridge.call<{ total: number; data: string }>("audio_read", [file, offset]);
+          const bytes = Buffer.from(piece.data, "base64");
+          if (!bytes.length && offset < piece.total) throw new LiveError(`${file} ended early`);
+          fs.writeSync(out, bytes);
+          offset += bytes.length;
+          total = piece.total;
+        }
+      } finally {
+        fs.closeSync(out);
+      }
+    } catch (e) {
+      fs.rmSync(dir, { recursive: true, force: true });
+      if (e instanceof BridgeError) {
+        const old = e.message.includes("unknown command") ? " (this LiveRemote is older than the server; install the LiveRemote that came with it)" : "";
+        throw new LiveError(`Live imports audio only from Live MCP's own folder, so the LiveRemote bridge copies ${file} there first, and that failed: ${e.message}${old}`);
+      }
+      throw e;
+    }
+    return copy;
+  };
+
   server.registerTool(
     "create_audio_clip",
     {
-      description: "Create an audio clip from a file on an audio track: in a session slot (slot) or in the arrangement (start, with optional length in beats). file is an absolute path. Answers with the clip's address and id (keep the #id for arrangement clips).",
+      description: "Create an audio clip from a file on an audio track: in a session slot (slot) or in the arrangement (start, with optional length in beats). file is an absolute path; Live copies the file into the set's project folder. A warped clip follows the set's tempo from the tempo Live guesses for the file; warped: false plays it at its own speed. Answers with the clip's address and id (keep the #id for arrangement clips). Files outside Live MCP's own folder are read through the LiveRemote bridge.",
       inputSchema: {
         track: address,
         file: z.string().describe("Absolute path to the audio file"),
@@ -614,8 +652,14 @@ export function createServer(deps: ServerDeps): McpServer {
       },
     },
     guarded(async ({ track, file, slot, start, length, warped }) => {
-      const { clip, address: a } = await live.createAudioClip(track, { slot, start, length, file, warped });
-      return live.clipInfo(clip, a);
+      let staged: string | undefined;
+      const stage = async (f: string) => (staged = await stageAudio(f)) ?? f;
+      try {
+        const { clip, address: a } = await live.createAudioClip(track, { slot, start, length, file, warped, stage });
+        return live.clipInfo(clip, a);
+      } finally {
+        if (staged) fs.rmSync(path.dirname(staged), { recursive: true, force: true });
+      }
     }),
   );
 

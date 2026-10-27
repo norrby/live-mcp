@@ -349,7 +349,11 @@ export class LiveAdapter {
     return { clip, address: this.arrangementAddress(t, track, clip) };
   }
 
-  async createAudioClip(track: string, opts: { slot?: number; start?: number; length?: number; file: string; warped?: boolean }): Promise<{ clip: AudioClip<V>; address: string }> {
+  /** stage, if given, turns the file into one Live may import, once everything else has been checked. */
+  async createAudioClip(
+    track: string,
+    opts: { slot?: number; start?: number; length?: number; file: string; warped?: boolean; stage?: (file: string) => Promise<string> },
+  ): Promise<{ clip: AudioClip<V>; address: string }> {
     const t = this.track(track);
     if (!(t instanceof AudioTrack)) throw new LiveError(`${track} is not an audio track`);
     if (opts.slot !== undefined && opts.start !== undefined) throw new LiveError("give slot (session) or start (arrangement), not both");
@@ -359,11 +363,12 @@ export class LiveAdapter {
     if (slot?.clip) throw new LiveError(`slot ${track}/s${opts.slot} already holds "${slot.clip.name}"; delete it first or pick another slot`);
     if (opts.slot === undefined && opts.start === undefined) throw new LiveError("give slot (session) or start (arrangement, in beats)");
     // An extension may not read files outside its own folder; Live copies the file into the project on its behalf.
+    const source = opts.stage ? await opts.stage(opts.file) : opts.file;
     let filePath: string;
     try {
-      filePath = await this.context.resources.importIntoProject(opts.file);
+      filePath = await this.context.resources.importIntoProject(source);
     } catch (e) {
-      throw new LiveError(`Live could not import ${opts.file}: ${e instanceof Error ? e.message : String(e)}`);
+      throw new LiveError(`Live could not import ${opts.file}: ${e instanceof Error ? e.message : e ? String(e) : "Live gave no reason (is it an audio file Live can read?)"}`);
     }
     if (slot) {
       const clip = await slot.createAudioClip({ filePath, isWarped: opts.warped });
