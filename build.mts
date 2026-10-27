@@ -17,5 +17,6 @@ await esbuild.build({
   sourcesContent: false,
   logLevel: "info",
   minify: production,
+  keepNames: true, // device kinds are class names (MxDeviceMidiEffect, RackDevice …), shown to the client
   sourcemap: !production,
 });
