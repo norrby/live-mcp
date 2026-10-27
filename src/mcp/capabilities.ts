@@ -19,6 +19,7 @@ export function capabilities(state: CapabilityState) {
       `recognise Max for Live devices from their .amxd files (${state.knownDevices} known${state.amxdVia === "bridge" ? ", read through the LiveRemote bridge" : ""}) and give long parameter names, units, choices and help texts`,
       "find parameters by name across the set",
       "clips: create MIDI clips in session slots or the arrangement, audio clips from files, read and replace notes, rename, loop, mute, delete",
+      "listen: render part of an audio track's arrangement and measure peak, RMS, loudness (LUFS), clipping and silence",
     ],
     viaBridge: [
       { what: "audio and MIDI routing of tracks and of Max for Live devices, monitoring", available: bridge },
@@ -33,6 +34,7 @@ export function capabilities(state: CapabilityState) {
       { what: "events or listeners: nothing is pushed to the client", why: "the Extensions API has no notifications; get_changes reports what changed since the last call" },
       { what: "arrangement automation (track envelopes and arrangement clip envelopes)", why: "Live's Python API returns no envelope for arrangement clips and has none for tracks; the Extensions API has no automation at all" },
       { what: "warping, freezing, recording, quantizing, moving a clip's loop or markers", why: "not in the Extensions API 1.0 nor in the bridge" },
+      { what: "hearing effects, MIDI tracks or the master", why: "Live renders only an audio track's clips, before its effects" },
       { what: "the MIDI To / Audio From of External Instrument and the Audio To / From of External Audio Effect", why: "neither Live's Python API nor the Extensions API exposes them; only Max for Live devices have routing points. Ask the user to set them in Live's window" },
     ],
     notes: [

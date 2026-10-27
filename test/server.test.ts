@@ -335,3 +335,15 @@ test("clip automation checks the clip, the track, the range and ask-first marks 
   await call(c, "delete_clip", { clips: [s.address, a.id] });
   await c.close();
 });
+
+test("measure_audio renders an audio track's range, measures it, and refuses MIDI tracks", async () => {
+  const c = await client();
+  const m = await call(c, "measure_audio", { track: "t1", start: 0, end: 4 });
+  assert.ok(m.ok, String(m.data));
+  assert.equal(m.data.seconds, 2);
+  assert.deepEqual(m.data.peakDbfs, [-6]);
+  assert.equal(m.data.silent, false);
+  assert.match((await call(c, "measure_audio", { track: "t0", start: 0, end: 4 })).data, /not an audio track/);
+  assert.match((await call(c, "measure_audio", { track: "t1", start: 4, end: 2 })).data, /end must come after start/);
+  await c.close();
+});

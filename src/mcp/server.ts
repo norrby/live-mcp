@@ -1,6 +1,8 @@
 // server.ts – the MCP server: tools and resources over the Live adapter, the Max for Live registry and the bridge.
 // One instance per HTTP request (stateless), so everything here must be cheap to construct.
 import * as path from "node:path";
+import * as fs from "node:fs";
+import { measure, parseAudio } from "../audio/analyse.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { LiveAdapter, LiveError, type ParameterInfo } from "../live/adapter.js";
@@ -8,7 +10,7 @@ import { explain } from "../live/errors.js";
 import { ChangeTracker } from "../live/changes.js";
 import { M4lRegistry } from "../m4l/registry.js";
 import type { M4lDevice, M4lParameter } from "../m4l/amxd.js";
-import { Device, Track } from "@ableton-extensions/sdk";
+import { AudioTrack, Device, Track } from "@ableton-extensions/sdk";
 import { Bridge, BridgeError } from "../bridge/client.js";
 import { capabilities } from "./capabilities.js";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
@@ -25,7 +27,7 @@ export const INSTRUCTIONS = [
   "- get_capabilities says what works now, what needs the LiveRemote bridge, and what no API in Live allows. When something cannot be done, tell the user instead of working around it.",
 ].join("\n");
 
-const READ_ONLY = new Set(["get_set", "get_capabilities", "list_parameters", "find_parameters", "get_parameters", "get_changes", "browse", "get_scenes", "get_clips", "get_notes", "get_routing", "get_device_routing", "get_clip_automation", "render_audio"]);
+const READ_ONLY = new Set(["get_set", "get_capabilities", "list_parameters", "find_parameters", "get_parameters", "get_changes", "browse", "get_scenes", "get_clips", "get_notes", "get_routing", "get_device_routing", "get_clip_automation", "measure_audio"]);
 const DESTRUCTIVE = new Set(["delete_device", "delete_track", "delete_clip", "set_notes", "clear_clip_automation"]);
 const IDEMPOTENT = new Set(["set_parameters", "set_parameter_display", "set_track", "set_tempo", "set_clip", "set_notes", "set_routing", "set_device_routing", "set_clip_automation", "clear_clip_automation"]);
 
@@ -550,6 +552,34 @@ export function createServer(deps: ServerDeps): McpServer {
     guarded(async ({ clip, clips }) => {
       const deleted = await live.deleteClips(unique(listOf(clip, clips, "clip")));
       return { deleted: deleted.length === 1 ? deleted[0] : deleted };
+    }),
+  );
+
+  // ---- listening ---------------------------------------------------------------------------------------------
+
+  server.registerTool(
+    "measure_audio",
+    {
+      description:
+        "Render part of an audio track's arrangement and measure it: sample peak and RMS per channel in dBFS, integrated loudness in LUFS (ITU-R BS.1770), clipped samples, whether it is silent, and a coarse loudness curve (32 slices, dBFS). Live renders the audio of the track's clips before its effects; MIDI tracks, effects and the master cannot be rendered by any API. start and end are in beats.",
+      inputSchema: { track: address, start: z.number().min(0).describe("Beats"), end: z.number().positive().describe("Beats; at most 1024 beats after start") },
+    },
+    guarded(async ({ track, start, end }) => {
+      const t = live.track(track);
+      if (!(t instanceof AudioTrack)) throw new LiveError(`${track} is not an audio track; Live can render only audio tracks, and only the audio of their clips before any effect`);
+      if (end <= start) throw new LiveError("end must come after start");
+      if (end - start > 1024) throw new LiveError("render at most 1024 beats at a time");
+      let file: string;
+      try {
+        file = await live.context.resources.renderPreFxAudio(t, start, end);
+      } catch (e) {
+        throw new LiveError(`Live could not render ${track} from beat ${start} to ${end}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      try {
+        return { track, from: start, to: end, ...measure(parseAudio(fs.readFileSync(file))), note: "the track's clips before its effects" };
+      } finally {
+        fs.rm(file, { force: true }, () => {});
+      }
     }),
   );
 

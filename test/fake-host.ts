@@ -1,5 +1,8 @@
 // fake-host.ts – an in-memory Live behind the SDK's low-level host API, so the real SDK classes, the adapter and the
 // MCP server run in plain Node. Only what the server uses is implemented; anything else throws "not faked".
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { ActivationContext, Handle } from "@ableton-extensions/sdk";
 
 type Id = bigint;
@@ -273,6 +276,19 @@ export class FakeLive {
       dataModel: this.dataModel(),
       environment: { storageDirectory: undefined, tempDirectory: undefined, language: "EN" },
       resources: {
+        renderPreFxAudio(_lane: unknown, args: { startTime: number; endTime: number }, ok: (p: string) => void) {
+          // a 1 kHz sine at half scale, as long as the range at 120 BPM, as a 16-bit mono WAV
+          const rate = 8000, frames = Math.round(((args.endTime - args.startTime) / 2) * rate);
+          const data = Buffer.alloc(frames * 2);
+          for (let i = 0; i < frames; i++) data.writeInt16LE(Math.round(16383 * Math.sin((2 * Math.PI * 1000 * i) / rate)), i * 2);
+          const fmt = Buffer.alloc(16);
+          fmt.writeUInt16LE(1, 0); fmt.writeUInt16LE(1, 2); fmt.writeUInt32LE(rate, 4); fmt.writeUInt32LE(rate * 2, 8); fmt.writeUInt16LE(2, 12); fmt.writeUInt16LE(16, 14);
+          const chunk = (id: string, body: Buffer) => { const h = Buffer.alloc(8); h.write(id, 0, "latin1"); h.writeUInt32LE(body.length, 4); return Buffer.concat([h, body]); };
+          const wave = Buffer.concat([Buffer.from("WAVE", "latin1"), chunk("fmt ", fmt), chunk("data", data)]);
+          const file = path.join(os.tmpdir(), `fake-render-${Date.now()}.wav`);
+          fs.writeFileSync(file, Buffer.concat([chunk("RIFF", wave).subarray(0, 8), wave]));
+          setImmediate(() => ok(file));
+        },
         importIntoProject(filePath: string, ok: (p: string) => void, fail: (e: string) => void) {
           if (filePath.includes("missing")) fail(`no such file: ${filePath}`);
           else ok(`/project/Samples/Imported/${filePath.split("/").pop()}`);
