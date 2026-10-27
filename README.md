@@ -1,102 +1,176 @@
 # Live MCP
 
-An MCP server for Ableton Live that runs inside Live itself, as an extension built on the Ableton Extensions SDK. A model connected to it can read the open set, change parameters, insert devices, and, through an optional bridge, control routing and transport. It understands Max for Live devices: long parameter names, units, choices and the help texts their authors wrote.
+An MCP server for **Ableton Live** that runs inside Live itself, as a Live extension. An AI assistant connected to
+it can read the open set and change it: tracks, devices, parameters, clips and notes. With an optional bridge it
+also reaches routing, transport, selection, undo and Live's browser. It understands Max for Live devices: long
+parameter names, units, choices and the help texts their authors wrote.
 
-## How it works
+MCP, the Model Context Protocol, is the standard way for an assistant such as Claude Code or GitHub Copilot to use
+outside tools. Live MCP is such a tool, and the thing it operates is your Live set.
 
-Live 12.4.15 and later run extensions in an Extension Host, a Node process that Live starts. This extension starts an HTTP server on `127.0.0.1:9871` in that process and speaks MCP over Streamable HTTP. Any MCP client on the same machine connects to `http://127.0.0.1:9871/mcp` with a bearer token.
+Not affiliated with or endorsed by Ableton. Use at your own risk.
 
-Three layers:
+## Features
 
-- **Live adapter** (`src/live/`): reads and writes the set through the Extensions SDK. Every object has an address: `t0` is the first track, `t0/d1` its second device, `t0/d1/p3` a parameter, `t0/vol` the track volume, `t0/s3` its fourth session clip slot, `t0/a0` its first arrangement clip, `r0` a return track, `main` the main track. `#id` addresses stay valid while the object exists, even when tracks move.
-- **MCP layer** (`src/mcp/`): the tools and resources, the hand-written HTTP transport, and the capability contract that tells the model what cannot be done and why.
-- **Bridge** (`src/bridge/`, `remote/`): the Extensions API has no routing, transport, selection, clip playing state or undo. A small control surface script, LiveRemote, provides them over a local socket. The bridge is optional; without it every such tool explains what is missing.
-
-Max for Live devices (`src/m4l/`): Live reports only the short parameter names of a Max for Live device, and many repeat ("Show", "Inv", "A"). The server reads the `.amxd` files in the configured folders, works out the order Live uses, and recognises a device in the set by its parameter fingerprint. Recognised devices get long names, units, choices and help texts in every answer.
-
-## Tools
-
-Reading: `get_set`, `get_capabilities`, `list_parameters`, `find_parameters`, `get_parameters`, `get_changes` (what changed since the last call, for a client that polls).
-
-Writing: `set_parameters` (several in one undo step), `set_parameter_display` (by the value Live shows, such as `-6 dB` or `250 Hz`; needs the bridge), `set_track`, `set_tempo`, `insert_device`, `delete_device`, `create_track`, `delete_track`.
-
-Clips: `get_clips`, `create_clip` (MIDI, session slot or arrangement, optionally with notes), `create_audio_clip` (from a file), `get_notes`, `set_notes` (replaces all notes in one undo step), `set_clip`, `delete_clip`. Clip addresses are `t0/s3` (session slot) and `t0/a1` (arrangement, ordered by time, so it shifts when clips are added or deleted; prefer the `#id` a create answers with).
-
-Through the bridge: `browse` and `load_browser_item` (any preset, Max for Live device or plug-in the browser shows), `transport`, `selection`, `get_scenes`, `fire`, `undo`, `redo`, `get_routing`, `set_routing`, `get_device_routing`, `set_device_routing`.
-
-Resources: `live://set` and `live://capabilities`.
-
-Values are in Live's internal units, within the `min` and `max` that `list_parameters` reports; quantized parameters take the index of the choice. With the bridge, `display: true` adds the string Live shows for each parameter, and `set_parameter_display` sets by such a string.
+- **Read the set:** tracks, return tracks, the main track, devices, rack chains, every parameter with its range,
+  choices and current value. `find_parameters` finds a parameter by name across the whole set.
+- **Change the set:** set parameters (several in one undo step), tempo, track name, mute, solo and arm. Insert and
+  delete Live's built-in devices, create and delete tracks.
+- **Clips and notes:** create MIDI clips in session slots or in the arrangement, optionally with notes; create
+  audio clips from files; read and replace the notes of a clip in one undo step; rename, loop, mute, delete.
+- **Max for Live devices:** Live reports only the short names of a Max for Live device's parameters, and many
+  repeat ("Show", "Inv", "A"). Live MCP reads the device's `.amxd` file, recognises the device in the set, and
+  answers with long names, units, choices and help texts.
+- **Noticing your edits:** Live sends no events to extensions, so `get_changes` compares the set with how it
+  looked at the last call and reports what you changed in the meantime.
+- **An honest contract:** `get_capabilities` says what can be done right now, what needs the bridge, and what no
+  API in Live allows, with the reason. A tool that cannot do something says so instead of failing silently.
+- **Through the bridge** (optional, see below): audio and MIDI routing, monitoring, transport, metronome, loop,
+  selection, scenes, firing clips and scenes, undo and redo, values as Live displays them (`-6 dB`, `250 Hz`), and
+  loading anything the browser shows: saved presets, Max for Live devices, plug-ins.
 
 ## Requirements
 
-- Ableton Live 12.4.15 or later with the Extension Host (the 12.4.15 beta has it) and Developer Mode on while developing.
-- Node 24.14.1 or later to build. Live ships its own Node for running.
-- For the bridge: the LiveRemote control surface script from `remote/LiveRemote/`, copied to `~/Music/Ableton/User Library/Remote Scripts/` and selected as a control surface in Live's Link, Tempo and MIDI settings.
+- Ableton Live 12.4.15 or later, which runs extensions (the 12.4.15 beta does).
+- An MCP client on the same computer, for example Claude Code or VS Code with GitHub Copilot.
+- For the bridge: Live's Python control surface scripts, which every Live has.
 
-## Build and run
+## Install
 
-Building needs the Ableton Extensions SDK and CLI, which Ableton distributes and which may not be redistributed. Put the two packages in `vendor/` (`ableton-extensions-sdk-1.0.0-beta.1.tgz` and `ableton-extensions-cli-1.0.0-beta.1.tgz`, as `package.json` names them) before `npm install`. Users who only install the `.ablx` need neither.
+1. Download `Live-MCP-<version>.ablx` from the latest release on the
+   [Releases](https://github.com/norrby/live-mcp/releases) page. It is one file with everything the extension needs;
+   Live brings its own Node.js to run it.
+2. In Live, open **Settings → Extensions** and drag the file there.
+3. On its first start the extension writes two files in its storage folder: `config.json` with a generated token,
+   and `connect.txt` with the lines to paste into a client. Live's log names the folder.
 
-```sh
-npm install
-npm run build:dev      # bundles src/ into dist/extension.js with a source map
-npm run host           # runs the extension in Live's Extension Host (Live must be open)
-```
+## Connect a client
 
-The first start writes `local/config.json` with the port and a generated token, and `connect.txt` next to it with the lines to paste into a client. With Claude Code:
+Paste the matching lines from `connect.txt`. For Claude Code:
 
 ```sh
 claude mcp add -s user --transport http live http://127.0.0.1:9871/mcp --header "Authorization: Bearer <token>"
 ```
 
-With VS Code and GitHub Copilot, in `.vscode/mcp.json` or the user-level `mcp.json`:
+For VS Code with GitHub Copilot, in `.vscode/mcp.json` or the user-level `mcp.json`:
 
 ```json
 { "servers": { "live": { "type": "http", "url": "http://127.0.0.1:9871/mcp", "headers": { "Authorization": "Bearer <token>" } } } }
 ```
 
-The token is generated by the server, not something the user brings; it keeps other local programs (and web pages, together with the Host/Origin checks) from driving Live. Setting `"token": ""` in the config turns authentication off for a machine where that is acceptable; the server then also refuses every request that carries an Origin header, so pages in a browser stay out while command-line clients get in.
+The token is made by the extension, not something you bring. It keeps other programs on the computer from
+driving Live. If you do not want one, set `"token": ""` in `config.json`: then any local program may connect, but
+requests from web pages are still refused.
 
-`node tools/client.mjs list` talks to the running server with a real MCP client; `node tools/client.mjs get_set` and `node tools/client.mjs set_parameters '{"changes":[{"address":"t0/d0/p2","value":64}]}'` call tools.
+## The bridge (optional)
+
+Live's extension API does not cover routing, transport, selection, undo or the browser. A small control surface
+script, **LiveRemote**, covers them through Live's older Python API, and Live MCP calls it over a local socket.
+Without the bridge everything else works, and the tools that need it say so.
+
+1. Copy the folder `remote/LiveRemote/` from this repository to `User Library/Remote Scripts/` (on a Mac
+   `~/Music/Ableton/User Library/Remote Scripts/LiveRemote/`).
+2. In Live, **Settings → Link, Tempo & MIDI**, pick **LiveRemote** as a Control Surface, with no ports. No API can
+   do this step for you.
+3. LiveRemote writes `.liveremote-token` in its own folder on its first start. Put that file's path in
+   `config.json` as `bridge.tokenFile` and restart the extension.
+
+## Safety
+
+An assistant that can change your set can also change it in ways you did not want. Live MCP therefore:
+
+- **listens on this computer only** (`127.0.0.1`), requires the token, and refuses requests that come from a web
+  page;
+- **makes every change undoable:** several parameter changes, or a clip with its notes, form one undo step;
+- **never runs code it is sent:** each tool and each bridge command is a fixed function with checked arguments;
+- **reports before and after** for every parameter it sets, so the assistant can see what it did.
+
+The bridge has its own token and the same rules.
+
+## What it cannot do
+
+Ask the server: `get_capabilities` answers for the running configuration. In short:
+
+- No events: the extension cannot be told when something changes. Poll with `get_changes`.
+- No automation, warping, freezing, recording or quantizing, and no moving a clip's loop or markers.
+- No MIDI To / Audio From of an **External Instrument**: no API in Live reaches them. Set them once in Live's
+  window, save the device as a preset, and load the preset with `load_browser_item`; a preset keeps its routing.
 
 ## Configuration
 
-`local/config.json` while developing, or `config.json` in the extension's storage directory once installed:
+`config.json` in the extension's storage folder (`local/config.json` while developing):
 
 ```json
 {
   "port": 9871,
   "token": "generated on first start; \"\" turns authentication off",
   "amxdDirectories": ["/Users/you/Music/Ableton/User Library/Presets"],
-  "bridge": { "port": 9870, "tokenFile": "/path/to/.liveremote-token" }
+  "bridge": { "port": 9870, "tokenFile": "/Users/you/Music/Ableton/User Library/Remote Scripts/LiveRemote/.liveremote-token" }
 }
 ```
 
-`amxdDirectories` are searched for `.amxd` files to recognise Max for Live devices. `bridge.tokenFile` is the token file LiveRemote writes on its first start: `.liveremote-token` inside the installed `LiveRemote` folder (see `TOKEN_PATH` at the top of `remote/LiveRemote/LiveRemote.py` to change it). Without it the bridge is off.
+| Key | What |
+|---|---|
+| `port` | the port the MCP server listens on |
+| `token` | the bearer token clients must send; `""` turns authentication off |
+| `amxdDirectories` | folders searched for `.amxd` files, to recognise Max for Live devices in the set |
+| `bridge.port` | the port LiveRemote listens on |
+| `bridge.tokenFile` | the token file LiveRemote writes; without it the bridge is off |
 
-## Package and install
+## Tools
+
+| Group | Tools |
+|---|---|
+| Reading | `get_set`, `get_capabilities`, `list_parameters`, `find_parameters`, `get_parameters`, `get_changes` |
+| Writing | `set_parameters`, `set_track`, `set_tempo`, `insert_device`, `delete_device`, `create_track`, `delete_track` |
+| Clips | `get_clips`, `create_clip`, `create_audio_clip`, `get_notes`, `set_notes`, `set_clip`, `delete_clip` |
+| Through the bridge | `set_parameter_display`, `browse`, `load_browser_item`, `transport`, `selection`, `get_scenes`, `fire`, `undo`, `redo`, `get_routing`, `set_routing`, `get_device_routing`, `set_device_routing` |
+
+Resources: `live://set` and `live://capabilities`.
+
+Every object has an **address**: `t0` is the first track, `t0/d1` its second device, `t0/d1/p3` a parameter of
+that device, `t0/vol` the track's volume, `t0/s3` its fourth session clip slot, `t0/a0` its first arrangement
+clip, `r0` the first return track, `main` the main track. Addresses are positions and shift when things move;
+`#id` addresses stay valid while the object exists.
+
+Values are in Live's internal units, within the `min` and `max` that `list_parameters` reports; a parameter with
+choices takes the index of the choice. With the bridge, `set_parameter_display` takes the value as Live shows it.
+
+## Development
+
+How Live MCP works, from the big picture down: [docs/architecture.md](docs/architecture.md).
+
+Building needs the Ableton Extensions SDK and CLI. Ableton distributes them and they may not be redistributed, so
+they are not in this repository: put the two packages in `vendor/` (`ableton-extensions-sdk-1.0.0-beta.1.tgz` and
+`ableton-extensions-cli-1.0.0-beta.1.tgz`, as `package.json` names them) before `npm install`. Node 24.14.1 or
+later.
 
 ```sh
-npm run package        # minified build, then Live-MCP-<version>.ablx
+npm install
+npm run build:dev   # bundles src/ into dist/extension.js with a source map
+npm run host        # runs the extension in Live's Extension Host; Live must be open with Developer Mode on
+npm test            # runs without Live, against a fake Extension Host
+npm run package     # minified build, then release/Live-MCP-<version>.ablx
 ```
 
-Drag the `.ablx` onto Settings, Extensions in Live.
+`npm run host` needs `EXTENSION_HOST_PATH` in `.env`: the path to the Extension Host module inside Live's
+application. `node tools/client.mjs list` talks to the running server as an MCP client does;
+`node tools/client.mjs get_set` and `node tools/client.mjs set_parameters '{"changes":[{"address":"t0/d0/p2","value":64}]}'`
+call tools.
 
-## Tests
-
-```sh
-npm test
-```
-
-The tests run without Live: a fake Extension Host in `test/fake-host.ts` drives the real SDK classes, the adapter, the MCP server and the HTTP transport, with a real MCP client on the other end. The Max for Live reader is also checked against real device files when they are present.
-
-## What it cannot do
-
-Ask the server: `get_capabilities` answers for the running configuration. In short: no events (poll with `get_changes`), no automation, recording or quantizing, and no way to set the MIDI To / Audio From of an External Instrument (Live exposes routing points of Max for Live devices only; save the device as a preset once and load that with `load_browser_item` instead). Plug-ins, Max for Live devices, presets, routing, transport, selection, firing clips and undo need the bridge.
+| Directory | Contents |
+|---|---|
+| `src/live/` | the adapter: reads and writes the set through the SDK, addresses, change tracking |
+| `src/mcp/` | the MCP tools and resources, the HTTP transport, the capability contract |
+| `src/m4l/` | the `.amxd` reader and the registry that recognises Max for Live devices |
+| `src/bridge/` | the client for LiveRemote |
+| `remote/LiveRemote/` | the LiveRemote control surface script (Python) |
+| `test/` | `node --test`, with a fake Extension Host |
+| `tools/` | running the extension in Live's host, a command-line MCP client |
 
 ## License
 
-Copyright (c) 2026 norrby. MIT License; see LICENSE.
+Copyright (c) 2026 norrby. MIT License; see [LICENSE](LICENSE).
 
-The Ableton Extensions SDK and CLI are not part of this repository and come under Ableton's own license. The packaged extension contains the parts of the SDK it uses, as that license allows.
+The Ableton Extensions SDK and CLI are not part of this repository and come under Ableton's own license. The
+packaged extension contains the parts of the SDK it uses, as that license allows.
