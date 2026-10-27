@@ -52,7 +52,7 @@ export function statusHtml(s: StatusState): string {
       : "not reachable: unzip LiveRemote into the User Library's Remote Scripts folder and pick it as a Control Surface in Settings, Link, Tempo &amp; MIDI";
   const m4l = `${s.maxForLive.known} devices known${s.maxForLive.via === "bridge" ? ", read through the bridge" : ""}${s.maxForLive.errors.length ? ` (${esc(s.maxForLive.errors[0])})` : ""}`;
   const token = s.token
-    ? `on: clients must send it (it is in the lines below). <button onclick="send('token_off')">Stop requiring a token</button>`
+    ? `on: clients must send it (it is in the lines below). <button onclick="send('token_off')">Don't require a token</button>`
     : `off: programs on this computer can connect, web pages cannot. <button onclick="send('token_on')">Require a token</button>`;
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
