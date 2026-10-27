@@ -352,10 +352,15 @@ class LiveRemote(ControlSurface):
 
     @staticmethod
     def _events(envelope, end):
-        return [[e.time, e.value] for e in envelope.events_in_range(0.0, float(end))]
+        out = []
+        for e in envelope.events_in_range(0.0, float(end)):
+            cc = getattr(e, "control_coefficients", None)
+            curve = (cc.x1, cc.y1, cc.x2, cc.y2) if cc is not None else ()
+            out.append([e.time, e.value] + list(curve) if any(curve) else [e.time, e.value])
+        return out
 
     def cmd_clip_envelopes(self, track, slot):
-        """Every automation envelope of a session clip: the parameter's ref and name, and its breakpoints [time, value]."""
+        """Every automation envelope of a session clip: the parameter's ref and name, and its breakpoints [time, value] or, curved, [time, value, x1, y1, x2, y2]."""
         t = self._track(track)
         clip = self._session_clip(track, slot)
         end = max(clip.length, clip.loop_end, clip.end_marker) + 1

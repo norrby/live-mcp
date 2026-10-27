@@ -63,6 +63,8 @@ export interface ServerDeps {
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 const json = (value: unknown): ToolResult => ({ content: [{ type: "text", text: JSON.stringify(value, bigintSafe) }] });
 const fail = (e: unknown): ToolResult => ({ isError: true, content: [{ type: "text", text: e instanceof BridgeError ? e.message : explain(e) }] });
+/** A bridge breakpoint, [time, value] or [time, value, x1, y1, x2, y2], in the shape set_clip_automation takes. */
+const toPoint = ([time, value, x1, y1, x2, y2]: number[]) => (x1 === undefined ? { time, value } : { time, value, curve: { x1, y1, x2, y2 } });
 const bigintSafe = (_k: string, v: unknown) => (typeof v === "bigint" ? Number(v) : v);
 const guarded = <A>(fn: (args: A) => Promise<unknown> | unknown) => async (args: A): Promise<ToolResult> => {
   try {
@@ -716,15 +718,15 @@ export function createServer(deps: ServerDeps): McpServer {
     "get_clip_automation",
     {
       description:
-        "The automation envelopes of a session clip: each automated parameter's address and its breakpoints [time in beats, value]. Live reports these values in its envelope units, which for many built-in parameters are the shown unit (Hz, linear gain) rather than the min..max of list_parameters. set_clip_automation takes values in min..max; Live converts them." +
+        "The automation envelopes of a session clip: each automated parameter's address and its breakpoints in the shape set_clip_automation takes (time in beats, value, and curve when the segment after it is curved). For some built-in parameters Live reports values in the shown unit (Hz, linear gain) rather than the min..max of list_parameters; set_clip_automation takes values in min..max and Live converts them." +
         viaBridge,
       inputSchema: { clip: clipAddress },
     },
     guarded(async ({ clip }) => {
       const c = sessionClip(clip);
-      const envelopes = await bridge.call<{ ref: never; name: string; events: [number, number][] }[]>("clip_envelopes", [c.trackIndex, c.slotIndex]);
+      const envelopes = await bridge.call<{ ref: never; name: string; events: number[][] }[]>("clip_envelopes", [c.trackIndex, c.slotIndex]);
       const trackAddress = live.trackAddress(c.track);
-      return { clip: c.address, envelopes: envelopes.map((e) => ({ parameter: refAddress(trackAddress, e.ref), name: e.name, points: e.events })) };
+      return { clip: c.address, envelopes: envelopes.map((e) => ({ parameter: refAddress(trackAddress, e.ref), name: e.name, points: e.events.map(toPoint) })) };
     }),
   );
 
@@ -755,8 +757,13 @@ export function createServer(deps: ServerDeps): McpServer {
       const late = points.filter((pt) => pt.time > end);
       if (late.length) throw new LiveError(`times must lie within the clip, 0..${end} beats; not ${late.map((l) => l.time).join(", ")}`);
       const events = [...points].sort((a, b) => a.time - b.time).map((pt) => (pt.curve ? [pt.time, pt.value, pt.curve.x1, pt.curve.y1, pt.curve.x2, pt.curve.y2] : [pt.time, pt.value]));
-      const result = await bridge.call<{ name: string; events: [number, number][] }>("set_clip_envelope", [c.trackIndex, c.slotIndex, ref, events], { replace });
-      return { clip: c.address, parameter, name: result.name, points: result.events.length, note: "points read back are in Live's envelope units (see get_clip_automation)" };
+      const result = await bridge.call<{ name: string; events: number[][] }>("set_clip_envelope", [c.trackIndex, c.slotIndex, ref, events], { replace });
+      const written = new Set(events.map((e) => e[1]));
+      const converted = result.events.some((e) => ![...written].some((v) => Math.abs(v - e[1]) < 1e-6));
+      return {
+        clip: c.address, parameter, name: result.name, points: result.events.length,
+        ...(converted && { note: `Live stores ${p.name} in its own unit (such as Hz or linear gain); get_clip_automation shows those values, set_clip_automation still takes ${p.min}..${p.max}` }),
+      };
     }),
   );
 
