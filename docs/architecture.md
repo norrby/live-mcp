@@ -214,6 +214,14 @@ flowchart LR
 A frozen and an unfrozen copy of the same device have the same fingerprint and the same parameters, and count as
 one match.
 
+A recognised device also brings two things the assistant needs to drive it without being told:
+
+- **The device's own description,** the text its author wrote in the patcher's description. It reaches the
+  assistant as `about`, so an author can say there how the device is meant to be used.
+- **The controls Live does not see,** such as stored tables or hidden buttons, each with the visible parameters
+  whose names start the same way. A step editor stores its table out of Live's reach but is edited through
+  parameters like "Osc 1 Table Step" and "Osc 1 Table Wave", and this is how the assistant finds them.
+
 ## 8. Noticing your edits
 
 Live gives extensions no events, so the extension cannot be told when you turn a knob. `get_changes` makes up for
