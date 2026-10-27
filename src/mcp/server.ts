@@ -364,8 +364,8 @@ export function createServer(deps: ServerDeps): McpServer {
   server.registerTool(
     "transport",
     {
-      description: "Transport status (playing, recording, tempo, position, loop, metronome) and actions: play, stop, continue, stop_all_clips, record_on/off, metronome_on/off, loop_on/off. Live applies play/stop a moment later: call again without an action to confirm." + viaBridge,
-      inputSchema: { action: z.enum(["play", "stop", "continue", "stop_all_clips", "record_on", "record_off", "metronome_on", "metronome_off", "loop_on", "loop_off"]).optional() },
+      description: "Transport status (playing, recording, tempo, position, loop, metronome) and actions: play, stop, continue, stop_all_clips, record_on/off, metronome_on/off, loop_on/off, back_to_arrangement. Live applies play/stop a moment later: call again without an action to confirm. Once a session clip has been fired on a track, that track ignores its arrangement clips until Back to Arrangement (arrangement_overridden is then true): to hear the arrangement, stop_all_clips or back_to_arrangement, then play." + viaBridge,
+      inputSchema: { action: z.enum(["play", "stop", "continue", "stop_all_clips", "record_on", "record_off", "metronome_on", "metronome_off", "loop_on", "loop_off", "back_to_arrangement"]).optional() },
     },
     guarded(({ action }) => bridge.call("transport", [], action ? { action } : {})),
   );
