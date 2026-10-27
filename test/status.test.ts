@@ -34,7 +34,7 @@ test("the status page says what runs, offers the token switch that fits, and esc
   assert.match(off, /code --add-mcp &#39;\{&quot;name&quot;:&quot;live&quot;\}&#39;/, "connect lines are escaped");
 
   const on = statusHtml({ ...base, token: "abc", bridge: "reachable", lastRequest: { secondsAgo: 75, what: "get_set({})" }, requests: 3, notice: "<b>hi</b>" });
-  assert.match(on, /send\('token_off'\)/);
+  assert.match(on, /send\('token_off'\)">Stop requiring a token</);
   assert.match(on, /1 min ago: get_set\(\{\}\) \(3 requests/);
   assert.match(on, /&lt;b&gt;hi&lt;\/b&gt;/);
   assert.match(on, /reachable: playback/);
