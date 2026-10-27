@@ -4,12 +4,13 @@ Protocol: one line of JSON per call,
   {"token": "<secret>", "cmd": "<name>", "args": [...], "kwargs": {...}}
 -> {"ok": true, "result": ...} or {"ok": false, "error": "..."}.
 
-Security: listens on loopback only, requires a token stored in
-.liveremote-token next to this script (created on first start, readable
-only by the user), and never runs strings as code: every cmd maps to a
-cmd_* method with fixed parameters.
+Security: listens on loopback only, closes a connection at the first line
+that is not a JSON object (a web browser can only send HTTP, whose first
+line never is), and never runs strings as code: every cmd maps to a cmd_*
+method with fixed parameters. A token is optional: when a file
+.liveremote-token next to this script holds one, every call must carry it.
 
-Commands: ping, reload, device_dir, tracks, devices, add_device, delete_device, create_midi_track,
+Commands: ping, amxd_list, amxd_read (answered off the main thread), reload, device_dir, tracks, devices, add_device, delete_device, create_midi_track,
   transport, selection, scenes, clips, fire, undo, redo, param, param_strs, param_set_display (for the live-mcp bridge),
 create_audio_track, delete_track, rename_track, select_track, routing,
 routing_options, param, browser, log.
@@ -17,6 +18,7 @@ routing_options, param, browser, log.
 All LOM work happens on the main thread: the socket thread queues, _poll() drains
 the queue every 100 ms via schedule_message.
 """
+import base64
 import json
 import os
 import queue
@@ -41,20 +43,59 @@ def err(msg):
     return {"ok": False, "error": msg}
 
 
-def load_or_create_token():
+def load_token():
+    """The token in .liveremote-token next to this script, or None when there is none (no token required)."""
     try:
         with open(TOKEN_PATH) as f:
-            tok = f.read().strip()
-            if tok:
-                return tok
+            return f.read().strip() or None
     except OSError:
-        pass
-    tok = secrets.token_hex(16)
-    os.makedirs(os.path.dirname(TOKEN_PATH), exist_ok=True)
-    fd = os.open(TOKEN_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
-        f.write(tok + "\n")
-    return tok
+        return None
+
+
+AMXD_MAX_FILES = 500
+AMXD_MAX_DEPTH = 6
+AMXD_MAX_BYTES = 32 * 1024 * 1024
+
+
+def amxd_list(dirs):
+    """The .amxd files under the given folders, with modification time and size. Live extensions may not read
+    outside their own folder, so the extension asks the bridge; only .amxd files are listed or read."""
+    found = []
+
+    def walk(d, depth):
+        if depth > AMXD_MAX_DEPTH or len(found) >= AMXD_MAX_FILES:
+            return
+        try:
+            entries = sorted(os.scandir(d), key=lambda e: e.name)
+        except OSError:
+            return
+        for e in entries:
+            if e.name.startswith(".") or len(found) >= AMXD_MAX_FILES:
+                continue
+            if e.is_dir(follow_symlinks=False):
+                walk(e.path, depth + 1)
+            elif e.is_file() and e.name.lower().endswith(".amxd"):
+                st = e.stat()
+                found.append({"file": e.path, "mtime": st.st_mtime * 1000, "size": st.st_size})
+
+    for d in dirs or []:
+        walk(os.path.expanduser(str(d)), 0)
+    return found
+
+
+def amxd_read(path):
+    """One .amxd file as base64."""
+    path = str(path)
+    if not path.lower().endswith(".amxd") or not os.path.isfile(path):
+        raise ValueError("not an .amxd file: %r" % path)
+    if os.path.getsize(path) > AMXD_MAX_BYTES:
+        raise ValueError("%s is larger than %d bytes" % (path, AMXD_MAX_BYTES))
+    with open(path, "rb") as f:
+        return base64.b64encode(f.read()).decode("ascii")
+
+
+# Commands that touch no Live object and are answered on the socket thread, so they never wait for Live.
+OFF_MAIN = {"ping": lambda: "pong", "amxd_list": amxd_list, "amxd_read": amxd_read}
 
 
 class LiveRemote(ControlSurface):
@@ -63,7 +104,7 @@ class LiveRemote(ControlSurface):
         self._queue = queue.Queue()
         self._stop = threading.Event()
         self._sock = None
-        self._token = load_or_create_token()
+        self._token = load_token()
         with self.component_guard():
             try:
                 self._start_server()
@@ -99,19 +140,26 @@ class LiveRemote(ControlSurface):
             for line in f:
                 try:
                     req = json.loads(line.decode("utf-8"))
-                except Exception as e:
-                    resp = err("bad json: %s" % e)
+                except Exception:
+                    req = None
+                if not isinstance(req, dict):
+                    # Not our protocol: an HTTP request from a web page, say. Answer nothing and hang up.
+                    break
+                if self._token is not None and not secrets.compare_digest(str(req.get("token", "")), self._token):
+                    resp = err("wrong token (see .liveremote-token next to LiveRemote.py)")
+                elif str(req.get("cmd")) in OFF_MAIN:
+                    try:
+                        resp = ok(OFF_MAIN[str(req.get("cmd"))](*(req.get("args") or []), **(req.get("kwargs") or {})))
+                    except Exception as e:
+                        resp = err("%s: %s" % (type(e).__name__, e))
                 else:
-                    if not isinstance(req, dict) or not secrets.compare_digest(str(req.get("token", "")), self._token):
-                        resp = err("wrong token (see .liveremote-token next to LiveRemote.py)")
+                    done = threading.Event()
+                    holder = {}
+                    self._queue.put((req, holder, done))
+                    if done.wait(MAIN_THREAD_TIMEOUT):
+                        resp = holder.get("resp", err("no response"))
                     else:
-                        done = threading.Event()
-                        holder = {}
-                        self._queue.put((req, holder, done))
-                        if done.wait(MAIN_THREAD_TIMEOUT):
-                            resp = holder.get("resp", err("no response"))
-                        else:
-                            resp = err("timeout: Live's main thread did not respond")
+                        resp = err("timeout: Live's main thread did not respond")
                 try:
                     f.write((json.dumps(resp, default=str) + "\n").encode("utf-8"))
                     f.flush()
