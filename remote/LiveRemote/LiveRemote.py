@@ -10,7 +10,7 @@ line never is), and never runs strings as code: every cmd maps to a cmd_*
 method with fixed parameters. A token is optional: when a file
 .liveremote-token next to this script holds one, every call must carry it.
 
-Commands: ping, amxd_list, amxd_read, reload, device_dir, tracks, devices, add_device, delete_device, create_midi_track,
+Commands: ping, amxd_list, amxd_read, clip_envelopes, set_clip_envelope, clear_clip_envelope, lom_dir, lom_doc, reload, device_dir, tracks, devices, add_device, delete_device, create_midi_track,
   transport, selection, scenes, clips, fire, undo, redo, param, param_strs, param_set_display (for the live-mcp bridge),
 create_audio_track, delete_track, rename_track, select_track, routing,
 routing_options, param, browser, log.
@@ -251,6 +251,129 @@ class LiveRemote(ControlSurface):
 
     def cmd_amxd_read(self, path):
         return amxd_read(path)
+
+    def cmd_lom_dir(self, path):
+        """Introspection: public names of a class in Live's Python module, e.g. "Clip.Clip" (read-only)."""
+        import Live
+        obj = Live
+        for part in [p for p in str(path).split(".") if p]:
+            obj = getattr(obj, part)
+        return [a for a in dir(obj) if not a.startswith("_")]
+
+    def cmd_lom_doc(self, path):
+        """Introspection: the docstring of something in Live's Python module, e.g. "Envelope.Envelope.create_event"."""
+        import Live
+        obj = Live
+        for part in [p for p in str(path).split(".") if p]:
+            obj = getattr(obj, part)
+        return getattr(obj, "__doc__", None)
+
+    # -- clip automation (session clips only: Live gives no envelope for arrangement clips) ------------------------
+    # A parameter is named by a ref: {"devices": [d, c, d2, ...], "param": i} walks track.devices[d], its
+    # chains[c].devices[d2] and so on; {"mixer": "volume" | "panning"} or {"mixer": "send", "index": i}.
+
+    def _session_clip(self, track, slot):
+        clip = self._track(track).clip_slots[int(slot)].clip
+        if clip is None:
+            raise ValueError("clip slot %s is empty" % slot)
+        return clip
+
+    def _param_from_ref(self, t, ref):
+        if "mixer" in ref:
+            m = t.mixer_device
+            if ref["mixer"] == "send":
+                return m.sends[int(ref.get("index", 0))]
+            return getattr(m, str(ref["mixer"]))
+        path = list(ref["devices"])
+        devices = t.devices
+        d = devices[int(path[0])]
+        i = 1
+        while i + 1 < len(path):
+            d = d.chains[int(path[i])].devices[int(path[i + 1])]
+            i += 2
+        return d.parameters[int(ref["param"])]
+
+    def _ref_of(self, t, param):
+        m = t.mixer_device
+        if param == m.volume:
+            return {"mixer": "volume"}
+        if param == m.panning:
+            return {"mixer": "panning"}
+        for i, s in enumerate(m.sends):
+            if param == s:
+                return {"mixer": "send", "index": i}
+
+        def walk(devices, path):
+            for di, d in enumerate(devices):
+                for pi, p in enumerate(d.parameters):
+                    if p == param:
+                        return {"devices": path + [di], "param": pi}
+                for ci, c in enumerate(getattr(d, "chains", []) or []):
+                    hit = walk(c.devices, path + [di, ci])
+                    if hit:
+                        return hit
+            return None
+
+        return walk(t.devices, [])
+
+    @staticmethod
+    def _events(envelope, end):
+        return [[e.time, e.value] for e in envelope.events_in_range(0.0, float(end))]
+
+    def cmd_clip_envelopes(self, track, slot):
+        """Every automation envelope of a session clip: the parameter's ref and name, and its breakpoints [time, value]."""
+        t = self._track(track)
+        clip = self._session_clip(track, slot)
+        end = max(clip.length, clip.loop_end, clip.end_marker) + 1
+        out = []
+        for env in clip.automation_envelopes:
+            p = env.parameter
+            out.append({"ref": self._ref_of(t, p), "name": p.name, "min": p.min, "max": p.max, "events": self._events(env, end)})
+        return out
+
+    def cmd_set_clip_envelope(self, track, slot, ref, events, replace=True):
+        """Writes breakpoints [time, value] or [time, value, x1, y1, x2, y2] into a session clip's envelope for one
+        parameter, as one undo step. replace clears the envelope first; otherwise the points are added."""
+        t = self._track(track)
+        clip = self._session_clip(track, slot)
+        param = self._param_from_ref(t, ref)
+        import Live
+        song = self.song()
+        song.begin_undo_step()
+        try:
+            env = clip.automation_envelope(param)
+            if env is not None and replace:
+                clip.clear_envelope(param)
+                env = None
+            if env is None:
+                env = clip.create_automation_envelope(param)
+            for ev in events:
+                time, value = float(ev[0]), float(ev[1])
+                if len(ev) >= 6:
+                    cc = Live.Envelope.EnvelopeEventControlCoefficients(float(ev[2]), float(ev[3]), float(ev[4]), float(ev[5]))
+                    env.create_event(Live.Envelope.EnvelopeEvent(time, value, cc))
+                else:
+                    env.create_event(Live.Envelope.EnvelopeEvent(time, value))
+        finally:
+            song.end_undo_step()
+        end = max(clip.length, clip.loop_end, clip.end_marker) + 1
+        return {"name": param.name, "events": self._events(env, end)}
+
+    def cmd_clear_clip_envelope(self, track, slot, ref=None):
+        """Clears one parameter's envelope in a session clip, or all of them when ref is None, as one undo step."""
+        t = self._track(track)
+        clip = self._session_clip(track, slot)
+        song = self.song()
+        song.begin_undo_step()
+        try:
+            if ref is None:
+                clip.clear_all_envelopes()
+                return "all"
+            param = self._param_from_ref(t, ref)
+            clip.clear_envelope(param)
+            return param.name
+        finally:
+            song.end_undo_step()
 
     def cmd_log(self, msg):
         self.log_message("LiveRemote: %s" % msg)
