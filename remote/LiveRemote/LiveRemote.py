@@ -10,7 +10,7 @@ line never is), and never runs strings as code: every cmd maps to a cmd_*
 method with fixed parameters. A token is optional: when a file
 .liveremote-token next to this script holds one, every call must carry it.
 
-Commands: ping, amxd_list, amxd_read (answered off the main thread), reload, device_dir, tracks, devices, add_device, delete_device, create_midi_track,
+Commands: ping, amxd_list, amxd_read, reload, device_dir, tracks, devices, add_device, delete_device, create_midi_track,
   transport, selection, scenes, clips, fire, undo, redo, param, param_strs, param_set_display (for the live-mcp bridge),
 create_audio_track, delete_track, rename_track, select_track, routing,
 routing_options, param, browser, log.
@@ -94,8 +94,6 @@ def amxd_read(path):
         return base64.b64encode(f.read()).decode("ascii")
 
 
-# Commands that touch no Live object and are answered on the socket thread, so they never wait for Live.
-OFF_MAIN = {"ping": lambda: "pong", "amxd_list": amxd_list, "amxd_read": amxd_read}
 
 
 class LiveRemote(ControlSurface):
@@ -134,6 +132,14 @@ class LiveRemote(ControlSurface):
             threading.Thread(target=self._handle, args=(conn,), daemon=True).start()
 
     def _handle(self, conn):
+        try:
+            self._serve_connection(conn)
+        except OSError:
+            pass  # the client hung up or timed out; nothing to answer
+
+    def _serve_connection(self, conn):
+        # Everything runs on the main thread (_poll), file work included: Live keeps Python's lock almost all the
+        # time, so a background thread that does many system calls crawls (listing a folder took over 20 s).
         with conn:
             conn.settimeout(60)
             f = conn.makefile("rwb")
@@ -147,11 +153,6 @@ class LiveRemote(ControlSurface):
                     break
                 if self._token is not None and not secrets.compare_digest(str(req.get("token", "")), self._token):
                     resp = err("wrong token (see .liveremote-token next to LiveRemote.py)")
-                elif str(req.get("cmd")) in OFF_MAIN:
-                    try:
-                        resp = ok(OFF_MAIN[str(req.get("cmd"))](*(req.get("args") or []), **(req.get("kwargs") or {})))
-                    except Exception as e:
-                        resp = err("%s: %s" % (type(e).__name__, e))
                 else:
                     done = threading.Event()
                     holder = {}
@@ -244,6 +245,12 @@ class LiveRemote(ControlSurface):
         d = self._device(track, device)
         return {"type": type(d).__name__, "module": type(d).__module__,
                 "attrs": [a for a in dir(d) if not a.startswith("_")]}
+
+    def cmd_amxd_list(self, dirs):
+        return amxd_list(dirs)
+
+    def cmd_amxd_read(self, path):
+        return amxd_read(path)
 
     def cmd_log(self, msg):
         self.log_message("LiveRemote: %s" % msg)
