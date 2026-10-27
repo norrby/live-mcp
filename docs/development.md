@@ -63,7 +63,8 @@ on its first start, and `connect.txt` next to it with the commands that connect 
 **A token.** Without one, any program on this computer can use Live MCP, as with any MCP server that runs locally;
 web pages and other computers cannot. To require a token, set `token` to a string of at least 16 characters
 (anything shorter is replaced by a generated one) and restart. `connect.txt` then holds the commands with the token
-in them.
+in them. Claude Desktop sends it with `mcp-remote`'s `--header` (add `"--header", "Authorization: Bearer <token>"` to
+`args`), and Cursor with `"headers": { "Authorization": "Bearer <token>" }` next to `url`.
 
 **The bridge.** LiveRemote is installed by hand (see the README); `npm run package` writes `release/LiveRemote.zip`
 next to the `.ablx`. It needs no token. To require one, put it in a file `.liveremote-token` next to

@@ -1,6 +1,6 @@
 # Live MCP
 
-Let an AI assistant work in your Ableton Live set. Ask Claude Code or GitHub Copilot to look at your tracks, turn
+Let an AI assistant work in your Ableton Live set. Ask Claude, GitHub Copilot or Cursor to look at your tracks, turn
 knobs, write a bass line into a clip or find the parameter you are looking for, and it does it in Live while you
 watch.
 
@@ -11,7 +11,7 @@ You need **Live 12 Suite**, version 12.4.15 or later. Extensions are in Ableton'
 
 1. Download the `.ablx` file from the [latest release](https://github.com/norrby/live-mcp/releases/latest).
 2. In Live, open **Settings → Extensions** and drag the file there.
-3. Connect your assistant with one command in a terminal.
+3. Connect your assistant.
 
    Claude Code:
 
@@ -23,6 +23,27 @@ You need **Live 12 Suite**, version 12.4.15 or later. Extensions are in Ableton'
 
    ```sh
    code --add-mcp '{"name":"live","type":"http","url":"http://127.0.0.1:9871/mcp"}'
+   ```
+
+   Claude Desktop: open **Settings → Developer → Edit Config**, add `live` under `mcpServers` as below, and restart
+   Claude Desktop. It needs [Node.js](https://nodejs.org) to reach Live MCP.
+
+   ```json
+   {
+     "mcpServers": {
+       "live": { "command": "npx", "args": ["-y", "mcp-remote", "http://127.0.0.1:9871/mcp"] }
+     }
+   }
+   ```
+
+   Cursor: open **Settings → MCP → Add new MCP server**, or edit `~/.cursor/mcp.json`, and add `live`:
+
+   ```json
+   {
+     "mcpServers": {
+       "live": { "url": "http://127.0.0.1:9871/mcp" }
+     }
+   }
    ```
 
 That's it. Ask your assistant *"What's in my Live set?"* to try it.
