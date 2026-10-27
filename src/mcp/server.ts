@@ -271,7 +271,7 @@ export function createServer(deps: ServerDeps): McpServer {
   server.registerTool(
     "set_parameters",
     {
-      description: "Set one or more parameters in a single undo step. Values are in Live's internal units, within the min..max that list_parameters reports (quantized: the index of the choice). Returns before/after per parameter; a rejected value does not stop the others. All changes in one call start at the same time, in no guaranteed order: when one parameter decides what others mean (a step or page selector, a mode), set it in a call of its own first. A parameter its device's author marked askFirst is refused unless the user asked for that change and the change says userAsked: true.",
+      description: "Set one or more parameters in a single undo step. Values are in Live's internal units, within the min..max that list_parameters reports (quantized: the index of the choice). Every value is checked against its range first; if one is wrong, nothing is changed. Returns before/after per parameter. All changes in one call start at the same time, in no guaranteed order: when one parameter decides what others mean (a step or page selector, a mode), set it in a call of its own first. A parameter its device's author marked askFirst is refused unless the user asked for that change and the change says userAsked: true.",
       inputSchema: {
         changes: z
           .array(

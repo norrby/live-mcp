@@ -83,7 +83,7 @@ test("lists tools and reads the set", async () => {
   await c.close();
 });
 
-test("lists and sets parameters; a batch is one transaction; bad values are reported per row", async () => {
+test("lists and sets parameters; a batch is one transaction; one bad value changes nothing", async () => {
   const c = await client();
   const list = await call(c, "list_parameters", { device: "t0/d0" });
   assert.ok(list.ok);
@@ -96,13 +96,17 @@ test("lists and sets parameters; a batch is one transaction; bad values are repo
   assert.equal(found.data.hits[0].address, "t0/d0/p2");
   assert.equal(found.data.hits[0].max, list.data.parameters[2].max, "a search hit carries the range");
   const before = fake.transactions;
-  const set = await call(c, "set_parameters", { changes: [{ address: "t0/d0/p2", value: 64 }, { address: "t0/d0/p3", value: 2 }, { address: "t0/d0/p1", value: 999 }] });
+  const refused = await call(c, "set_parameters", { changes: [{ address: "t0/d0/p2", value: 64 }, { address: "t0/d0/p3", value: 2 }, { address: "t0/d0/p1", value: 999 }] });
+  assert.equal(refused.ok, false);
+  assert.match(refused.data, /Nothing was changed: t0\/d0\/p1 "A": 999 is outside 0\.\.127/);
+  assert.match((await call(c, "set_parameters", { changes: [{ address: "t0/d0/p3", value: 1.5 }] })).data, /not a whole number; choose one of 0=Lowp/);
+  assert.equal(fake.transactions, before, "nothing was started");
+  const set = await call(c, "set_parameters", { changes: [{ address: "t0/d0/p2", value: 64 }, { address: "t0/d0/p3", value: 2 }] });
   assert.ok(set.ok);
   assert.equal(set.data[0].after, 64);
   assert.equal(set.data[1].after, 2);
-  assert.match(set.data[2].error, /rejected 999 for "A"; range 0..127/);
   assert.equal(fake.transactions, before + 1, "one transaction for the batch");
-  assert.equal(fake.writesInTransaction[fake.writesInTransaction.length - 1], 3, "all writes started inside it");
+  assert.equal(fake.writesInTransaction[fake.writesInTransaction.length - 1], 2, "all writes started inside it");
   const get = await call(c, "get_parameters", { addresses: ["t0/d0/p2", "t0/vol", "r0/vol"] });
   assert.deepEqual(get.data.map((r: { value: number }) => r.value), [64, 0.85, 0.85]);
   await c.close();

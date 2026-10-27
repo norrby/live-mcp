@@ -421,6 +421,14 @@ export class LiveAdapter {
       seen.add(c.address);
     }
     const params = changes.map((c) => this.parameter(c.address));
+    // Check every value before setting any, so a batch is all or nothing as far as we can tell beforehand.
+    const wrong = changes.flatMap((c, i) => {
+      const p = params[i];
+      if (!Number.isFinite(c.value) || c.value < p.min || c.value > p.max) return [`${c.address} "${p.name}": ${c.value} is outside ${p.min}..${p.max}`];
+      if (p.isQuantized && !Number.isInteger(c.value)) return [`${c.address} "${p.name}": ${c.value} is not a whole number; choose one of ${p.valueItems.map((x, j) => `${j}=${x.name}`).join(", ")}`];
+      return [];
+    });
+    if (wrong.length) throw new LiveError(`Nothing was changed: ${wrong.join("; ")}`);
     const before = await this.readValues(params);
     const start = (p: DeviceParameter<V>, value: number): Promise<void> => {
       try {
