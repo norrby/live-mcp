@@ -6,8 +6,9 @@ watch.
 
 ## Install
 
-You need **Live 12 Suite**, version 12.4.15 or later. Extensions are in Ableton's
-[public beta](https://ableton.github.io/extensions-sdk/) for now, and only in Suite.
+Live MCP is a Live **extension**, so it only runs in a Live that has extensions: **Live 12 Suite, version 12.4.15 or
+later**. For now that means Ableton's [public beta](https://ableton.github.io/extensions-sdk/); extensions are not in
+Live Standard, Intro or older versions, and without them Live MCP does not work at all.
 
 1. Download the `.ablx` file from the [latest release](https://github.com/norrby/live-mcp/releases/latest).
 2. In Live, open **Settings → Extensions** and drag the file there.
