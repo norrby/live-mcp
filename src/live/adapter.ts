@@ -460,12 +460,15 @@ export class LiveAdapter {
   // Several changes as one undo step: withinTransaction only groups what starts synchronously inside the callback,
   // so every setValue is started there and awaited afterwards.
   async setValues(changes: { address: string; value: number }[]): Promise<{ address: string; name: string; before: number; after: number; error?: string }[]> {
-    const seen = new Set<string>();
-    for (const c of changes) {
-      if (seen.has(c.address)) throw new LiveError(`${c.address} appears twice in one batch; send one value per parameter`);
-      seen.add(c.address);
-    }
     const params = changes.map((c) => this.parameter(c.address));
+    // By the parameter itself, since t0/d0/p1 and #id/p1 can name the same one.
+    const seen = new Map<string, string>();
+    changes.forEach((c, i) => {
+      const id = this.id(params[i]);
+      const first = seen.get(id);
+      if (first !== undefined) throw new LiveError(`${first === c.address ? c.address : `${first} and ${c.address}`} name the same parameter twice in one batch; send one value per parameter`);
+      seen.set(id, c.address);
+    });
     // Check every value before setting any, so a batch is all or nothing as far as we can tell beforehand.
     const wrong = changes.flatMap((c, i) => {
       const p = params[i];

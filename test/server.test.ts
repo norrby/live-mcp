@@ -120,7 +120,9 @@ test("explains bad addresses and missing objects", async () => {
   const mixed = (await call(c, "get_parameters", { addresses: ["t0/d0", "t0/vol"] })).data;
   assert.match(mixed[0].error, /Device, not a parameter|not a parameter/, "a wrong address gets its own error");
   assert.equal(typeof mixed[1].value, "number", "the others are still read");
-  assert.match((await call(c, "set_parameters", { changes: [{ address: "t0/d0/p1", value: 1 }, { address: "t0/d0/p1", value: 2 }] })).data, /appears twice/);
+  assert.match((await call(c, "set_parameters", { changes: [{ address: "t0/d0/p1", value: 1 }, { address: "t0/d0/p1", value: 2 }] })).data, /t0\/d0\/p1 name the same parameter twice/);
+  const deviceId = (await call(c, "get_set")).data.tracks[0].devices[0].id;
+  assert.match((await call(c, "set_parameters", { changes: [{ address: "t0/d0/p1", value: 1 }, { address: `${deviceId}/p1`, value: 2 }] })).data, /t0\/d0\/p1 and #.*\/p1 name the same parameter twice/);
   await c.close();
 });
 
