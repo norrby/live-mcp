@@ -29,17 +29,17 @@ test("record names its tracks to the bridge, and stop reports what the take adde
   await new Promise<void>((r) => fakeRemote.listen(0, "127.0.0.1", r));
   t.after(() => fakeRemote.close());
   const live = new LiveAdapter(initialize(smallSet().activation(), "1.0.0"));
-  const server = createServer({
-    live, registry: new M4lRegistry({ directories: [] }), bridge: new Bridge({ port: (fakeRemote.address() as net.AddressInfo).port }),
-    changes: new ChangeTracker(live), version: "test", log: () => {},
-  });
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  await server.connect(a);
-  const c = new Client({ name: "test", version: "0" });
-  await c.connect(b);
-  t.after(() => c.close());
+  const bridge = new Bridge({ port: (fakeRemote.address() as net.AddressInfo).port });
+  const changes = new ChangeTracker(live);
+  // Over HTTP every request gets a server of its own, so every call here does too: record and stop meet different ones.
   const call = async (name: string, args: Record<string, unknown> = {}) => {
+    const server = createServer({ live, registry: new M4lRegistry({ directories: [] }), bridge, changes, version: "test", log: () => {} });
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    await server.connect(a);
+    const c = new Client({ name: "test", version: "0" });
+    await c.connect(b);
     const r = (await c.callTool({ name, arguments: args })) as { isError?: boolean; content: { text: string }[] };
+    await c.close();
     let data: unknown = r.content[0].text;
     try {
       data = JSON.parse(r.content[0].text);

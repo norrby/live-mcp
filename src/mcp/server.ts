@@ -131,11 +131,10 @@ export function createServer(deps: ServerDeps): McpServer {
     return tracks;
   };
 
-  /** The arrangement clips of every track when a take started, by id, to tell afterwards what the take added and replaced. */
-  let take: { tracks: string[]; before: Map<string, Set<string>> } | undefined;
   const arrangementIds = () => new Map(live.song.tracks.map((t) => [live.id(t), new Set(t.arrangementClips.map((c) => live.id(c)))]));
   /** What a take did: the clips it added per track, which tracks it was not meant for, and the clips that went. */
   const takeReport = () => {
+    const take = takes.get(live);
     if (!take) return undefined;
     const { tracks, before } = take;
     const added: { track: string; clip: string; id: string; start: number; length: number; notes?: number }[] = [];
@@ -520,9 +519,9 @@ export function createServer(deps: ServerDeps): McpServer {
       if (action !== "record") {
         if (tracks || start !== undefined) throw new LiveError("tracks and start go with action record only");
         const status = await bridge.call<Record<string, unknown>>("transport", [], action ? { action } : {});
-        if (!take || (action !== "stop" && action !== "record_off")) return status;
+        if (!takes.has(live) || (action !== "stop" && action !== "record_off")) return status;
         const report = takeReport();
-        if (action === "stop") take = undefined;
+        if (action === "stop") takes.delete(live);
         return { ...status, take: report };
       }
       if (!tracks?.length) throw new LiveError("record needs tracks: every track to record on (arm them first with set_track)");
@@ -534,7 +533,7 @@ export function createServer(deps: ServerDeps): McpServer {
       });
       const before = arrangementIds();
       const started = await bridge.call<Record<string, unknown>>("record", [indices], start !== undefined ? { start } : {});
-      take = { tracks: chosen.map((t) => live.id(t)), before };
+      takes.set(live, { tracks: chosen.map((t) => live.id(t)), before });
       return started;
     }),
   );
@@ -974,6 +973,13 @@ export function createServer(deps: ServerDeps): McpServer {
 
   return server;
 }
+
+/**
+ * The take in progress per Live: the tracks it was meant for and every track's arrangement clips when it started, by
+ * id. It lives outside createServer because the HTTP transport makes a server per request, so record and stop meet
+ * different servers.
+ */
+const takes = new WeakMap<LiveAdapter, { tracks: string[]; before: Map<string, Set<string>> }>();
 
 /** Neither Live's Python API nor the Extensions API reaches these fields; the model must ask the user. */
 const NO_DEVICE_IO = "The MIDI To and Audio From of an External Instrument, and the Audio To/From of an External Audio Effect, are not in Live's APIs and can only be set in Live's window.";
