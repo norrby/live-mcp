@@ -113,7 +113,7 @@ export function parseMidi(buf: Buffer): MidiFile {
         open.get(key)!.push({ tick, velocity: second });
       } else if (kind === 0x80 || kind === 0x90) close(channel, first);
     }
-    for (const [key, list] of open) for (const _ of list) close(Math.floor(key / 128), key % 128); // notes never released end at the track's end
+    for (const [key, list] of open) while (list.length) close(Math.floor(key / 128), key % 128); // notes never released end at the track's end
     raw.push({ name, notes });
   }
 
