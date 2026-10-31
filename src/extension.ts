@@ -8,7 +8,7 @@ import { LiveAdapter } from "./live/adapter.js";
 import { M4lRegistry } from "./m4l/registry.js";
 import { Bridge } from "./bridge/client.js";
 import { ChangeTracker } from "./live/changes.js";
-import { createServer } from "./mcp/server.js";
+import { createServer, newOrigins } from "./mcp/server.js";
 import { startHttp } from "./mcp/transport.js";
 
 declare const __VERSION__: string;
@@ -29,6 +29,8 @@ export function activate(activation: ActivationContext) {
     const bridge = new Bridge(config.bridge);
     const registry = new M4lRegistry({ directories: config.amxdDirectories, log, fallback: bridge.amxdSource() });
     const changes = new ChangeTracker(live);
+    // Shared by every client: a device Live MCP loaded for one client is known to come from its file for all.
+    const origins = newOrigins(live, registry, bridge);
     const installed = Boolean(context.environment.storageDirectory);
     const shownToken = !config.token ? "none (authentication off)" : installed ? config.token.slice(0, 4) + "…" + config.token.slice(-4) : config.token;
     log(`live-mcp ${VERSION}; globals installed: ${installedGlobals.length}; config ${config.file}; token ${shownToken}`);
@@ -53,7 +55,7 @@ export function activate(activation: ActivationContext) {
         activity.last = { at: Date.now(), what };
       },
       log,
-      makeServer: () => createServer({ live, registry, bridge, changes, version: VERSION, log, userLibrary: config.userLibrary, readOnly: config.readOnly, ownFolders: [context.environment.tempDirectory, context.environment.storageDirectory].filter((d): d is string => Boolean(d)) }),
+      makeServer: () => createServer({ live, registry, bridge, changes, origins, version: VERSION, log, userLibrary: config.userLibrary, readOnly: config.readOnly, ownFolders: [context.environment.tempDirectory, context.environment.storageDirectory].filter((d): d is string => Boolean(d)) }),
       health: () => ({ version: VERSION, tracks: live.song.tracks.length, knownDevices: registry.files().length }),
     });
 

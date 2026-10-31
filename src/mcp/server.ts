@@ -10,6 +10,7 @@ import { LiveAdapter, LiveError, secondsAtBeat, type ParameterInfo, type TrackIn
 import { explain } from "../live/errors.js";
 import { ChangeTracker } from "../live/changes.js";
 import { M4lRegistry, isForbidden } from "../m4l/registry.js";
+import { M4lOrigins, type M4lSources } from "../m4l/origins.js";
 import type { M4lDevice, M4lParameter } from "../m4l/amxd.js";
 import { findSection } from "../m4l/guide.js";
 import { AudioClip, AudioTrack, Device, MidiTrack, Track } from "@ableton-extensions/sdk";
@@ -61,6 +62,8 @@ export interface ServerDeps {
   readOnly?: boolean;
   /** the installed extension's temp and storage folders, the only places Live imports audio files from; none while developing */
   ownFolders?: string[];
+  /** which file each Max for Live device comes from; shared by every client's server, made here when not given */
+  origins?: M4lOrigins;
 }
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
@@ -105,12 +108,28 @@ export function createServer(deps: ServerDeps): McpServer {
   (server as unknown as { registerTool: unknown }).registerTool = (name: string, config: { annotations?: ToolAnnotations }, cb: unknown) =>
     deps.readOnly && !READ_ONLY.has(name) ? undefined : register(name, { ...config, annotations: { ...annotationsFor(name), ...config.annotations } } as never, cb as never);
 
-  const m4lFor = (deviceAddress: string): M4lDevice | undefined => {
+  const origins = deps.origins ?? newOrigins(live, registry, bridge);
+  /** The file a device in the set comes from: the one the set or a load names, else the parameter fingerprint's. */
+  const m4lCandidates = (deviceAddress: string): M4lDevice[] => {
     const d = live.device(deviceAddress);
-    return registry.match(d.parameters.map((p) => p.name), d.name);
+    return registry.matches(d.parameters.map((p) => p.name), d.name, origins.originOf(live.id(d)));
+  };
+  const m4lFor = (deviceAddress: string): M4lDevice | undefined => m4lCandidates(deviceAddress)[0];
+  /** For a Max for Live device no file was found for: why, and what the user can do. Undefined for any other device. */
+  const unrecognised = (deviceAddress: string): string | undefined => {
+    const d = live.device(deviceAddress);
+    if (origins.isMax(live.id(d)) !== true || m4lFor(deviceAddress)) return undefined;
+    return (
+      `Live MCP does not know which .amxd file this Max for Live device was loaded from (Live does not say), so only the short names and values Live shows are known: no long names, help texts or guide. ` +
+      (origins.setFile
+        ? "The saved set names no file whose parameters match it, so the device was likely added or changed after the last save. Tell the user that saving the set (Cmd/Ctrl+S) lets Live MCP find it"
+        : "The set has never been saved. Tell the user that saving the set (Cmd/Ctrl+S) lets Live MCP find it") +
+      ", as does keeping the .amxd file in the User Library or in a folder under Places in Live's browser."
+    );
   };
 
   const overview = async () => {
+    await origins.sync();
     const song = live.song;
     const tracks = await withImplicitArm(live.tracks());
     for (const t of tracks) for (const d of t.devices) annotateDevice(d);
@@ -185,7 +204,7 @@ export function createServer(deps: ServerDeps): McpServer {
   const annotateDevice = (d: { address: string; kind: string; chains?: { devices: { address: string; kind: string }[] }[]; m4l?: string }) => {
     const dev = live.device(d.address);
     // Several files with the same parameters, none named like the device: kind names them all rather than guess.
-    const ms = registry.matches(dev.parameters.map((p) => p.name), dev.name);
+    const ms = registry.matches(dev.parameters.map((p) => p.name), dev.name, origins.originOf(live.id(dev)));
     if (ms.length) d.kind = "Max for Live: " + ms.map((m) => path.basename(m.file, ".amxd")).join(" or ");
     for (const c of d.chains ?? []) for (const dd of c.devices) annotateDevice(dd);
   };
@@ -237,6 +256,7 @@ export function createServer(deps: ServerDeps): McpServer {
     // Until the .amxd files have arrived through the bridge the marks are unknown; wait for them rather than let a
     // marked parameter through in the first seconds after Live starts.
     await registry.ready();
+    await origins.sync();
     // Reading them can fail halfway (a timeout, Live busy). While the bridge answers, the marks can still come, so a
     // device the registry does not know may be a marked one: hold its changes rather than guess. Without a bridge at
     // all they can never come, and then the guard cannot help.
@@ -316,6 +336,7 @@ export function createServer(deps: ServerDeps): McpServer {
         const vals = await live.readValues(d.parameters);
         infos.forEach((p, i) => (p.value = vals[i]));
       }
+      await origins.sync();
       const m4l = m4lFor(device);
       const rows = infos.map((p, i) => compactParam(p, m4l?.parameters[i], help && !compact));
       if (compact) for (const r of rows) {
@@ -345,6 +366,8 @@ export function createServer(deps: ServerDeps): McpServer {
             : undefined,
         });
       }
+      const why = m4l ? undefined : unrecognised(device);
+      if (why) out.m4l = { recognised: false, note: why };
       out.parameters = q ? rows.filter((r, i) => matches(r.name) || matches(r.longName) || matches(m4l?.parameters[i]?.help)) : rows;
       if (compact && asked === undefined)
         out.note = `${rows.length} parameters, so compact rows; list_parameters with query (a name or a word from the help texts) gives choices and help for some, compact=false for all`;
@@ -364,9 +387,10 @@ export function createServer(deps: ServerDeps): McpServer {
       },
     },
     guarded(async ({ device, section, whole }) => {
+      await origins.sync();
       const d = live.device(device);
       const m4l = m4lFor(device);
-      if (!m4l) throw new LiveError(`${d.name} is not a recognised Max for Live device, so it has no guide; list_parameters gives what Live knows about it`);
+      if (!m4l) throw new LiveError(unrecognised(device) ?? `${d.name} is not a recognised Max for Live device, so it has no guide; list_parameters gives what Live knows about it`);
       const guide = m4l.guide;
       if (!guide && !m4l.guideName) throw new LiveError(`${d.name} has no guide: its description names no .md file. The description (m4l.about) and the parameters' help texts in list_parameters are what there is`);
       if (!guide) throw new LiveError(`${d.name}'s description names ${m4l.guideName}, but ${m4l.frozen ? "the frozen device does not carry a file of that name" : `there is no such file beside ${path.basename(m4l.file)}`}. The description (m4l.about) and the parameters' help texts in list_parameters are what there is`);
@@ -385,7 +409,8 @@ export function createServer(deps: ServerDeps): McpServer {
       description: "Find parameters by name across the set (case-insensitive substring of the short name, or of the long name or help text for recognised Max for Live devices). Live's names are short (Vel, Freq, Res, Env, Amt): search a short stem such as \"vel\", not \"velocity\". Returns addresses to use with get_parameters/set_parameters, with range, choices and, for Max for Live devices, the help text.",
       inputSchema: { query: z.string().min(1), device: address.optional().describe("Limit to one device") },
     },
-    guarded(({ query, device }) => {
+    guarded(async ({ query, device }) => {
+      await origins.sync();
       const q = query.toLowerCase();
       const hits: unknown[] = [];
       const search = (deviceAddress: string) => {
@@ -556,7 +581,7 @@ export function createServer(deps: ServerDeps): McpServer {
     guarded(async ({ track, item, settleMs }) => {
       const holder = live.track(track);
       const before = holder.devices.map((d) => live.id(d));
-      const loaded = await bridge.call<{ from: string; item: string; devices_after: string[] }>("add_device", [bridgeTrackIndex(live, track), item]);
+      const loaded = await bridge.call<{ from: string; item: string; uri?: string; devices_after: string[] }>("add_device", [bridgeTrackIndex(live, track), item]);
       // Live may add a large device a moment after the bridge has answered.
       const t0 = Date.now();
       let added = holder.devices.findIndex((d) => !before.includes(live.id(d)));
@@ -572,6 +597,9 @@ export function createServer(deps: ServerDeps): McpServer {
         registry.scan(true);
         if (registry.via === "bridge") await registry.refresh();
       }
+      // Live MCP chose the file, so the device is known to come from it, whatever copies of it lie elsewhere.
+      const file = loaded.uri ? uriToFile(loaded.uri, deps.userLibrary ?? path.join(process.env.HOME ?? "", "Music", "Ableton", "User Library")) : undefined;
+      if (file && /\.amxd$/i.test(file)) await origins.remember(live.id(device), file);
       const m4l = m4lFor(live.id(device));
       const signal = m4l?.parameters.findIndex((p) => p.ready) ?? -1;
       let waited = ready;
@@ -1273,6 +1301,21 @@ export function notInLive(m: M4lDevice, deviceAddress: string): { name: string; 
         : [];
       return related.length ? { name: p.longName, seeInstead: related } : { name: p.longName };
     });
+}
+
+/** Which file each Max for Live device comes from, asked of the bridge; addresses become ids at once, since they shift. */
+export function newOrigins(live: LiveAdapter, registry: M4lRegistry, bridge: Bridge): M4lOrigins {
+  return new M4lOrigins(
+    registry,
+    () => bridge.call<M4lSources>("m4l_sources"),
+    (address) => {
+      try {
+        return live.id(live.device(address));
+      } catch {
+        return undefined;
+      }
+    },
+  );
 }
 
 /** The file behind a browser item's uri: the User Library or a folder under Places; undefined for anything else. */

@@ -50,8 +50,30 @@ export class M4lRegistry {
   /** through the bridge: every listed file has arrived (or was found unreadable), so the registry knows what it can */
   loaded = false;
   readonly errors: string[] = [];
+  /** folders and single .amxd files beyond options.directories: the folders under Places, the files a set names */
+  private extra: string[] = [];
 
   constructor(readonly options: RegistryOptions) {}
+
+  /** Everything the registry reads: the configured folders, then the extra folders and files. */
+  get roots(): string[] {
+    return [...new Set([...this.options.directories, ...this.extra])];
+  }
+
+  /**
+   * Sets the extra folders and files to read beside the configured folders, and reads them at once when they changed,
+   * so that a device whose file lies elsewhere (named by the saved set, loaded from Places) is known from this call on.
+   */
+  async setExtra(paths: string[]): Promise<void> {
+    const next = [...new Set(paths)].sort();
+    if (next.join("\u0000") === this.extra.join("\u0000")) return;
+    this.extra = next;
+    if (this.via === "files") return this.scan(true);
+    this.scannedAt = Date.now();
+    // A refresh already running lists the old roots; wait for it, then list the new ones.
+    if (this.refreshing) await this.refreshing;
+    return this.refresh();
+  }
 
   /**
    * Rescans at most once a minute (it runs on the host's event loop); cheap when nothing changed (stat per file).
@@ -91,7 +113,21 @@ export class M4lRegistry {
         }
       }
     };
-    for (const dir of this.options.directories) walk(dir, 0);
+    for (const root of this.roots) {
+      if (!root.toLowerCase().endsWith(".amxd")) {
+        walk(root, 0);
+        continue;
+      }
+      // A single file, named by the set or by a load.
+      try {
+        if (fs.statSync(root).isFile()) {
+          seen.add(root);
+          this.load(root);
+        }
+      } catch (e) {
+        if (isForbidden(e)) forbidden = true;
+      }
+    }
     if (forbidden && this.options.fallback) {
       this.via = "bridge";
       this.options.log?.("Live does not let this extension read the Max for Live folders; asking the LiveRemote bridge instead");
@@ -109,7 +145,7 @@ export class M4lRegistry {
     this.refreshing ??= (async () => {
       const errors: string[] = [];
       try {
-        const devices = (await source.list(this.options.directories)).slice(0, this.options.maxFiles ?? 500);
+        const devices = (await source.list(this.roots)).slice(0, this.options.maxFiles ?? 500);
         const seen = new Set(devices.map((f) => f.file));
         for (const { file, mtime } of devices) {
           const have = this.entries.get(file);
@@ -189,8 +225,8 @@ export class M4lRegistry {
    * match only when they describe the same parameters (a frozen and an unfrozen copy, say); then the file named like
    * the device in Live is the one, or else the first.
    */
-  match(liveNames: string[], deviceName?: string): M4lDevice | undefined {
-    return this.matches(liveNames, deviceName)[0];
+  match(liveNames: string[], deviceName?: string, origin?: string): M4lDevice | undefined {
+    return this.matches(liveNames, deviceName, origin)[0];
   }
 
   /**
@@ -198,10 +234,14 @@ export class M4lRegistry {
    * describe the same parameters when no name tells them apart (a device may rename itself in Live). Empty when none
    * or when the files that share the fingerprint differ, which no name can settle.
    */
-  matches(liveNames: string[], deviceName?: string): M4lDevice[] {
+  matches(liveNames: string[], deviceName?: string, origin?: string): M4lDevice[] {
     if (liveNames.length < 2) return [];
     this.scan();
     const key = fingerprint(liveNames);
+    // The file the device is known to come from (the saved set names it, or Live MCP loaded it) wins over any
+    // other, provided its parameters are still the ones the device shows; a device saved, then edited, is not.
+    const known = origin ? this.entries.get(origin) : undefined;
+    if (known && known.fingerprint === key) return [known.device];
     const hits = [...this.entries.values()].filter((e) => e.fingerprint === key);
     if (hits.length === 0) return [];
     const detail = (d: M4lDevice) => fingerprint(d.parameters.map((p) => `${p.longName}|${p.min}|${p.max}|${p.unit ?? ""}|${(p.choices ?? []).join(",")}`));
