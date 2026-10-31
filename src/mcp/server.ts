@@ -139,6 +139,8 @@ export function createServer(deps: ServerDeps): McpServer {
     const { tracks, before } = take;
     const added: { track: string; clip: string; id: string; start: number; length: number; notes?: number }[] = [];
     const replaced: { track: string; id: string }[] = [];
+    const warnings: string[] = [];
+    const meant = new Set(tracks);
     live.song.tracks.forEach((t, i) => {
       const was = before.get(live.id(t)) ?? new Set<string>();
       const now = t.arrangementClips;
@@ -146,17 +148,13 @@ export function createServer(deps: ServerDeps): McpServer {
         if (was.has(live.id(c))) continue;
         const info = live.clipInfo(c, `t${i}/a${now.indexOf(c)}`);
         added.push({ track: t.name, clip: info.address, id: info.id, start: c.startTime, length: info.length, ...(info.notes !== undefined ? { notes: info.notes } : {}) });
+        // By the track itself: two tracks may share a name.
+        if (!meant.has(live.id(t))) warnings.push(`${t.name} (t${i}) got a clip although the take was not meant for it`);
+        if (info.notes === 0) warnings.push(`${info.address} on ${t.name} has no notes`);
       }
       const nowIds = new Set(now.map((c) => live.id(c)));
       for (const id of was) if (!nowIds.has(id)) replaced.push({ track: t.name, id });
     });
-    const warnings: string[] = [];
-    const meant = new Set(tracks);
-    for (const a of added) {
-      const t = live.song.tracks.find((x) => x.name === a.track);
-      if (t && !meant.has(live.id(t))) warnings.push(`${a.track} got a clip although the take was not meant for it`);
-      if (a.notes === 0) warnings.push(`${a.clip} on ${a.track} has no notes`);
-    }
     if (!added.length) warnings.push("the take added no clip");
     return { added, replaced, ...(warnings.length ? { warnings } : {}) };
   };
