@@ -66,6 +66,8 @@ export interface TrackInfo {
   mute?: boolean;
   solo?: boolean;
   arm?: boolean;
+  /** Live records on the selected MIDI track while no MIDI track is armed (the pink arm button); from the bridge */
+  implicitArm?: boolean;
   group?: string;
   clips?: ClipInfo[];
   devices: DeviceInfo[];

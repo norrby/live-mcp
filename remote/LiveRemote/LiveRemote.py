@@ -11,7 +11,7 @@ method with fixed parameters. A token is optional: when a file
 .liveremote-token next to this script holds one, every call must carry it.
 
 Commands: ping, amxd_list, amxd_read, midi_read, audio_read, browser_uri, clip_envelopes, set_clip_envelope, clear_clip_envelope, lom_dir, lom_doc, reload, device_dir, tracks, devices, add_device, delete_device, create_midi_track,
-  transport, selection, scenes, clips, fire, undo, redo, param, param_strs, param_set_display (for the live-mcp bridge),
+  transport, arms, record, selection, scenes, clips, fire, undo, redo, param, param_strs, param_set_display (for the live-mcp bridge),
 create_audio_track, delete_track, rename_track, select_track, routing,
 routing_options, param, browser, log.
 
@@ -449,9 +449,70 @@ class LiveRemote(ControlSurface):
                 row.update(input_type=self._dn(t.input_routing_type), input_channel=self._dn(t.input_routing_channel),
                            output_type=self._dn(t.output_routing_type), output_channel=self._dn(t.output_routing_channel),
                            monitor=["In", "Auto", "Off"][t.current_monitoring_state] if t.can_be_armed else None,
-                           arm=t.arm if t.can_be_armed else None)
+                           arm=t.arm if t.can_be_armed else None,
+                           implicit_arm=getattr(t, "implicit_arm", False) if t.can_be_armed else None)
             rows.append(row)
         return rows
+
+    def cmd_arms(self):
+        """Every track that can record: arm, Live's implicit arm (the selected MIDI track while no MIDI track is armed),
+        and monitoring."""
+        return [{"index": i, "name": t.name, "kind": self._track_kind(t), "arm": t.arm,
+                 "implicit_arm": getattr(t, "implicit_arm", False),
+                 "monitor": ["In", "Auto", "Off"][t.current_monitoring_state]}
+                for i, t in enumerate(self.song().tracks) if t.can_be_armed]
+
+    def _would_record(self):
+        """The tracks Live records on when the arrangement record button is on: armed, or armed implicitly."""
+        return [r for r in self.cmd_arms() if r["arm"] or r["implicit_arm"]]
+
+    def _why(self, row):
+        return "armed" if row["arm"] else "the selected MIDI track, which Live arms by itself"
+
+    def _record_warnings(self, indices, start):
+        """What a take from start on the given tracks would replace or not hear."""
+        song, warnings = self.song(), []
+        for i in indices:
+            t = song.tracks[i]
+            later = [c.name or "unnamed" for c in t.arrangement_clips if c.end_time > start]
+            if later:
+                warnings.append("%s has clips from %s on that the take replaces as it goes: %s" % (t.name, start, ", ".join(later)))
+        for i, t in enumerate(song.tracks):
+            if t.can_be_armed and t.has_midi_input and t.current_monitoring_state == 0 and len(t.arrangement_clips):
+                warnings.append("%s monitors In, so its own clips are silent" % t.name)
+        return warnings
+
+    def cmd_record(self, tracks, start=None):
+        """Arrangement recording, checked and started in one go on Live's main thread, so nothing can change in between:
+        the tracks that would record must be exactly 'tracks' (indices into song.tracks), else nothing happens. Moves
+        the playhead to start (beats) if given, turns the record button on and plays from there."""
+        song = self.song()
+        if song.record_mode:
+            raise ValueError("Not started: Live is already recording. Stop first.")
+        wanted = sorted(set(int(i) for i in tracks))
+        for i in wanted:
+            if i < 0 or i >= len(song.tracks) or not song.tracks[i].can_be_armed:
+                raise ValueError("Not started: track %s cannot record (only MIDI and audio tracks can)." % i)
+        rows = self._would_record()
+        actual = [r["index"] for r in rows]
+        if actual != wanted:
+            extra = ["%s (t%s, %s)" % (r["name"], r["index"], self._why(r)) for r in rows if r["index"] not in wanted]
+            missing = ["%s (t%s)" % (song.tracks[i].name, i) for i in wanted if i not in actual]
+            parts = []
+            if extra:
+                parts.append("these would record too: " + "; ".join(extra))
+            if missing:
+                parts.append("these are not armed: " + "; ".join(missing))
+            raise ValueError("Not started, nothing changed: " + ". ".join(parts) + ". Arm exactly the tracks to record "
+                             "(set_track arm), and if a MIDI track records only because it is selected, ask the user to "
+                             "select another track or arm one; do not change the user's selection yourself.")
+        if start is not None:
+            song.current_song_time = float(start)
+        at = song.current_song_time
+        warnings = self._record_warnings(wanted, at)
+        song.record_mode = True
+        song.continue_playing()
+        return {"recording": [song.tracks[i].name for i in wanted], "start": at, "warnings": warnings}
 
     def cmd_devices(self, track):
         t = self._track(track)
@@ -756,7 +817,9 @@ class LiveRemote(ControlSurface):
                 song.back_to_arranger = False
             else:
                 raise ValueError("unknown transport action %r" % action)
+        would = self._would_record()
         return {"is_playing": song.is_playing, "record_mode": song.record_mode, "tempo": song.tempo,
+                "would_record": ["%s (t%s, %s)" % (r["name"], r["index"], self._why(r)) for r in would],
                 "signature_numerator": song.signature_numerator, "signature_denominator": song.signature_denominator,
                 "current_song_time": song.current_song_time, "loop": song.loop, "loop_start": song.loop_start,
                 "loop_length": song.loop_length, "metronome": song.metronome,

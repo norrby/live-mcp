@@ -25,7 +25,7 @@ export function capabilities(state: CapabilityState) {
     ],
     viaBridge: [
       { what: "audio and MIDI routing of tracks and of Max for Live devices, monitoring", available: bridge },
-      { what: "transport: play, stop, record, metronome, loop, position", available: bridge },
+      { what: "transport: play, stop, metronome, loop, position; arrangement recording on named tracks only", available: bridge },
       { what: "selection: selected track, device and scene; scenes and session clips; firing clips and scenes", available: bridge },
       { what: "undo and redo", available: bridge },
       { what: "parameter values as Live displays them (dB, Hz, ms) for built-in devices, and setting a parameter by such a value", available: bridge },
@@ -35,7 +35,7 @@ export function capabilities(state: CapabilityState) {
     cannot: [
       { what: "events or listeners: nothing is pushed to the client", why: "the Extensions API has no notifications; get_changes reports what changed since the last call" },
       { what: "arrangement automation (track envelopes and arrangement clip envelopes)", why: "Live's Python API returns no envelope for arrangement clips and has none for tracks; the Extensions API has no automation at all" },
-      { what: "warping, freezing, recording, quantizing, moving a clip's loop or markers", why: "not in the Extensions API 1.0 nor in the bridge" },
+      { what: "warping, freezing, session recording, quantizing, moving a clip's loop or markers", why: "not in the Extensions API 1.0 nor in the bridge" },
       { what: "hearing effects, MIDI tracks or the master", why: "Live renders only an audio track's clips, before its effects" },
       { what: "the MIDI To / Audio From of External Instrument and the Audio To / From of External Audio Effect", why: "neither Live's Python API nor the Extensions API exposes them; only Max for Live devices have routing points. Ask the user to set them in Live's window" },
     ],

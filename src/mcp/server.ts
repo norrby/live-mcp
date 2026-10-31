@@ -6,7 +6,7 @@ import { measure, parseAudio } from "../audio/analyse.js";
 import { parseMidi } from "../midi/smf.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { LiveAdapter, LiveError, type ParameterInfo } from "../live/adapter.js";
+import { LiveAdapter, LiveError, type ParameterInfo, type TrackInfo } from "../live/adapter.js";
 import { explain } from "../live/errors.js";
 import { ChangeTracker } from "../live/changes.js";
 import { M4lRegistry, isForbidden } from "../m4l/registry.js";
@@ -106,11 +106,60 @@ export function createServer(deps: ServerDeps): McpServer {
 
   const m4lFor = (deviceAddress: string): M4lDevice | undefined => registry.match(live.device(deviceAddress).parameters.map((p) => p.name));
 
-  const overview = () => {
+  const overview = async () => {
     const song = live.song;
-    const tracks = live.tracks();
+    const tracks = await withImplicitArm(live.tracks());
     for (const t of tracks) for (const d of t.devices) annotateDevice(d);
     return { tempo: song.tempo, scenes: song.scenes.length, tracks };
+  };
+  /**
+   * Adds Live's implicit arm (the selected MIDI track records while no MIDI track is armed) from the bridge, which
+   * alone can read it; without the bridge, or if it is slow, the tracks come back as they are.
+   */
+  const withImplicitArm = async <T extends TrackInfo>(tracks: T[]): Promise<T[]> => {
+    let timer: Parameters<typeof clearTimeout>[0];
+    const arms = await Promise.race([
+      bridge.call<{ index: number; implicit_arm: boolean }[]>("arms").catch(() => undefined),
+      new Promise<undefined>((r) => (timer = setTimeout(r, 1500))),
+    ]).finally(() => clearTimeout(timer));
+    if (!arms) return tracks;
+    const regular = live.song.tracks.map((t) => live.id(t));
+    for (const a of arms) {
+      const info = tracks.find((t) => t.id === regular[a.index]);
+      if (info && info.arm !== undefined) info.implicitArm = a.implicit_arm;
+    }
+    return tracks;
+  };
+
+  /** The arrangement clips of every track when a take started, by id, to tell afterwards what the take added and replaced. */
+  let take: { tracks: string[]; before: Map<string, Set<string>> } | undefined;
+  const arrangementIds = () => new Map(live.song.tracks.map((t) => [live.id(t), new Set(t.arrangementClips.map((c) => live.id(c)))]));
+  /** What a take did: the clips it added per track, which tracks it was not meant for, and the clips that went. */
+  const takeReport = () => {
+    if (!take) return undefined;
+    const { tracks, before } = take;
+    const added: { track: string; clip: string; id: string; start: number; length: number; notes?: number }[] = [];
+    const replaced: { track: string; id: string }[] = [];
+    live.song.tracks.forEach((t, i) => {
+      const was = before.get(live.id(t)) ?? new Set<string>();
+      const now = t.arrangementClips;
+      for (const c of now) {
+        if (was.has(live.id(c))) continue;
+        const info = live.clipInfo(c, `t${i}/a${now.indexOf(c)}`);
+        added.push({ track: t.name, clip: info.address, id: info.id, start: c.startTime, length: info.length, ...(info.notes !== undefined ? { notes: info.notes } : {}) });
+      }
+      const nowIds = new Set(now.map((c) => live.id(c)));
+      for (const id of was) if (!nowIds.has(id)) replaced.push({ track: t.name, id });
+    });
+    const warnings: string[] = [];
+    const meant = new Set(tracks);
+    for (const a of added) {
+      const t = live.song.tracks.find((x) => x.name === a.track);
+      if (t && !meant.has(live.id(t))) warnings.push(`${a.track} got a clip although the take was not meant for it`);
+      if (a.notes === 0) warnings.push(`${a.clip} on ${a.track} has no notes`);
+    }
+    if (!added.length) warnings.push("the take added no clip");
+    return { added, replaced, ...(warnings.length ? { warnings } : {}) };
   };
   const annotateDevice = (d: { address: string; kind: string; chains?: { devices: { address: string; kind: string }[] }[]; m4l?: string }) => {
     const m = m4lFor(d.address);
@@ -357,13 +406,13 @@ export function createServer(deps: ServerDeps): McpServer {
   server.registerTool(
     "set_track",
     { description: "Rename, mute, solo or arm a track.", inputSchema: { track: address, name: z.string().optional(), mute: z.boolean().optional(), solo: z.boolean().optional(), arm: z.boolean().optional() } },
-    guarded(({ track, name, mute, solo, arm }) => {
+    guarded(async ({ track, name, mute, solo, arm }) => {
       const t = live.track(track);
       if (name !== undefined) t.name = name;
       if (mute !== undefined) t.mute = mute;
       if (solo !== undefined) t.solo = solo;
       if (arm !== undefined) t.arm = arm;
-      return live.trackInfo(t, track);
+      return (await withImplicitArm([live.trackInfo(t, track)]))[0];
     }),
   );
 
@@ -459,10 +508,35 @@ export function createServer(deps: ServerDeps): McpServer {
   server.registerTool(
     "transport",
     {
-      description: "Transport status (playing, recording, tempo, position, loop, metronome) and actions: play, stop, continue, stop_all_clips, record_on/off, metronome_on/off, loop_on/off, back_to_arrangement. Live applies play/stop a moment later: call again without an action to confirm. Once a session clip has been fired on a track, that track ignores its arrangement clips until Back to Arrangement (arrangement_overridden is then true): to hear the arrangement, stop_all_clips or back_to_arrangement, then play." + viaBridge,
-      inputSchema: { action: z.enum(["play", "stop", "continue", "stop_all_clips", "record_on", "record_off", "metronome_on", "metronome_off", "loop_on", "loop_off", "back_to_arrangement"]).optional() },
+      description: "Transport status (playing, recording, tempo, position, loop, metronome, would_record: the tracks Live records on now) and actions: play, stop, continue, stop_all_clips, record, record_off, metronome_on/off, loop_on/off, back_to_arrangement. Live applies play/stop a moment later: call again without an action to confirm. Once a session clip has been fired on a track, that track ignores its arrangement clips until Back to Arrangement (arrangement_overridden is then true): to hear the arrangement, stop_all_clips or back_to_arrangement, then play.\n" +
+        "record records into the arrangement: give tracks (the ones to record on; arm them first with set_track) and optionally start (beats). In one step Live MCP checks that exactly those tracks would record, moves the playhead to start and plays with the record button on; if any other track would record (Live also records on the selected MIDI track while no MIDI track is armed), nothing happens and the answer says why. stop or record_off afterwards answers with what the take added and replaced." + viaBridge,
+      inputSchema: {
+        action: z.enum(["play", "stop", "continue", "stop_all_clips", "record", "record_off", "metronome_on", "metronome_off", "loop_on", "loop_off", "back_to_arrangement"]).optional(),
+        tracks: z.array(address).optional().describe("record only: the tracks to record on, all of them; required with record"),
+        start: z.number().min(0).optional().describe("record only: where the take starts, in beats; default the current position"),
+      },
     },
-    guarded(({ action }) => bridge.call("transport", [], action ? { action } : {})),
+    guarded(async ({ action, tracks, start }) => {
+      if (action !== "record") {
+        if (tracks || start !== undefined) throw new LiveError("tracks and start go with action record only");
+        const status = await bridge.call<Record<string, unknown>>("transport", [], action ? { action } : {});
+        if (!take || (action !== "stop" && action !== "record_off")) return status;
+        const report = takeReport();
+        if (action === "stop") take = undefined;
+        return { ...status, take: report };
+      }
+      if (!tracks?.length) throw new LiveError("record needs tracks: every track to record on (arm them first with set_track)");
+      const chosen = tracks.map((a) => live.track(a));
+      const indices = chosen.map((t, n) => {
+        const i = live.song.tracks.indexOf(t);
+        if (i < 0) throw new LiveError(`${tracks[n]} cannot record: only MIDI and audio tracks can`);
+        return i;
+      });
+      const before = arrangementIds();
+      const started = await bridge.call<Record<string, unknown>>("record", [indices], start !== undefined ? { start } : {});
+      take = { tracks: chosen.map((t) => live.id(t)), before };
+      return started;
+    }),
   );
 
   server.registerTool(
