@@ -22,7 +22,7 @@ export const INSTRUCTIONS = [
   "- Start with get_set. Addresses (t0, t0/d1, t0/d1/p3, t0/s0, t0/a0) are positions and shift when things move; keep the #id a create answers with.",
   "- Before driving a Max for Live device, read list_parameters: m4l.about is its author's own instructions, follow them. Parameters under m4l.askFirst change only when the user asked for that very action; never set userAsked on your own.",
   "- When one parameter decides what others edit (a step, page or mode selector), set it in a call of its own first.",
-  "- Each call is one undo step, so put related changes in one call; Live's undo (Cmd/Ctrl+Z) takes back a whole call. The exception: a new clip that also gets notes or a name takes two steps (the clip, then its contents).",
+  "- Each call is one undo step, so put related changes in one call; Live's undo (Cmd/Ctrl+Z) takes back a whole call. The exception: a new clip that also gets notes or a name, or a new track with a name, takes two steps (the clip or track, then its contents or name).",
   "- A track that has played a session clip ignores its arrangement clips until transport back_to_arrangement.",
   "- Live sends no events: get_changes tells what the user changed since you last looked.",
   "- get_capabilities says what works now, what needs the LiveRemote bridge, and what no API in Live allows. When something cannot be done, tell the user instead of working around it.",
