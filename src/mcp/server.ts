@@ -195,7 +195,12 @@ export function createServer(deps: ServerDeps): McpServer {
     // Until the .amxd files have arrived through the bridge the marks are unknown; wait for them rather than let a
     // marked parameter through in the first seconds after Live starts.
     await registry.ready();
+    // Reading them can fail halfway (a timeout, Live busy). While the bridge answers, the marks can still come, so a
+    // device the registry does not know may be a marked one: hold its changes rather than guess. Without a bridge at
+    // all they can never come, and then the guard cannot help.
+    const unsure = registry.via === "bridge" && !registry.loaded && (await bridge.ping());
     const refused: string[] = [];
+    const unknown: string[] = [];
     for (const c of changes) {
       if (c.userAsked) continue;
       const p = live.parameter(c.address);
@@ -203,12 +208,18 @@ export function createServer(deps: ServerDeps): McpServer {
       if (!(device instanceof Device)) continue;
       const deviceAddress = live.id(device);
       const index = device.parameters.indexOf(p);
-      const m = m4lFor(deviceAddress)?.parameters[index];
+      const known = m4lFor(deviceAddress);
+      if (!known && unsure) unknown.push(c.address);
+      const m = known?.parameters[index];
       if (!m?.askFirst) continue;
       const info = live.deviceParameters(deviceAddress)[index];
       if (c.value !== undefined && c.value === info?.default) continue;
       refused.push(`${m.longName} (${c.address})${m.help ? `: "${m.help}"` : ""}`);
     }
+    if (unknown.length)
+      throw new LiveError(
+        `Nothing was changed. The Max for Live files that say which parameters wait for the user have not all been read yet (${registry.errors.join("; ") || "still reading"}), so ${unknown.join(", ")} cannot be checked. Try again in a few seconds; if it keeps failing, tell the user.`,
+      );
     if (refused.length)
       throw new LiveError(
         `Nothing was changed. The device's author marked ${refused.join("; ")} as changed only when the user asks. Do not choose it on your own: ask the user, and repeat the call with userAsked: true on that change only if they asked for it in so many words.`,
