@@ -2,8 +2,10 @@
 // Live only exposes the SHORT names of Max for Live parameters, so the long names, units, choices and help texts
 // come from here. Container: "ampf" u32 "mmmm" | "meta" u32 u32 | "ptch" u32(len) then either the patcher JSON
 // (unfrozen) or "mx@c" u32(16) u32(0) u32(dlst offset) and the JSON followed by the embedded files (frozen).
+// A frozen file ends with its dependency list "dlst": big-endian chunks, one "dire" per file with "type", "fnam",
+// "sz32" (size) and "of32" (offset from the start of the "mx@c" header); the patcher JSON itself is the first entry.
 import * as fs from "node:fs";
-import type { M4lGuide } from "./guide.js";
+import { guideNameIn, parseGuide, type M4lGuide } from "./guide.js";
 
 export interface M4lParameter {
   longName: string;
@@ -33,7 +35,9 @@ export interface M4lDevice {
   frozen: boolean;
   /** the patcher's description (Patcher Inspector), where an author can say what the device is and how to drive it */
   description?: string;
-  /** the author's guide from the .md file beside the .amxd file, if there is one */
+  /** the guide file the description names (an .md file): embedded in a frozen device, beside an unfrozen one */
+  guideName?: string;
+  /** the author's guide, once read: from the frozen file here, from beside an unfrozen file by the registry */
   guide?: M4lGuide;
   /** parameters visible to Live, in Live's order; index 0 is Live's own "Device On" */
   parameters: M4lParameter[];
@@ -67,6 +71,57 @@ export function patcherJsonOf(raw: Buffer, file: string): { json: unknown; froze
   const start = frozen ? 48 : 32;
   const end = jsonEnd(raw, start); // the "ptch" length covers trailing bytes too, so find the JSON's own end
   return { json: JSON.parse(raw.subarray(start, end).toString("utf8")), frozen };
+}
+
+export interface EmbeddedFile {
+  name: string;
+  /** Max's four-letter file type, such as "TEXT", "JSON" or "svg " */
+  type: string;
+  offset: number;
+  size: number;
+}
+
+/** The files a frozen device carries, from its dependency list; none for an unfrozen file or an unreadable list. */
+export function embeddedFiles(raw: Buffer): EmbeddedFile[] {
+  if (raw.length < 48 || raw.subarray(32, 36).toString("latin1") !== "mx@c") return [];
+  const base = 32;
+  let at = base + raw.readUInt32BE(44);
+  if (at + 8 > raw.length || raw.subarray(at, at + 4).toString("latin1") !== "dlst") at = raw.lastIndexOf("dlst", undefined, "latin1");
+  if (at < 48 || at + 8 > raw.length) return [];
+  const end = Math.min(raw.length, at + raw.readUInt32BE(at + 4));
+  const out: EmbeddedFile[] = [];
+  let pos = at + 8;
+  while (pos + 8 <= end) {
+    const size = raw.readUInt32BE(pos + 4);
+    if (size < 8 || pos + size > end) break;
+    if (raw.subarray(pos, pos + 4).toString("latin1") === "dire") {
+      const entry: Partial<EmbeddedFile> = {};
+      let q = pos + 8;
+      while (q + 8 <= pos + size) {
+        const tag = raw.subarray(q, q + 4).toString("latin1");
+        const s = raw.readUInt32BE(q + 4);
+        if (s < 8 || q + s > pos + size) break;
+        const payload = raw.subarray(q + 8, q + s);
+        if (tag === "type") entry.type = payload.toString("latin1");
+        else if (tag === "fnam") entry.name = payload.toString("utf8").replace(/\0+$/, "");
+        else if (tag === "sz32" && payload.length >= 4) entry.size = payload.readUInt32BE(0);
+        else if (tag === "of32" && payload.length >= 4) entry.offset = base + payload.readUInt32BE(0);
+        q += s;
+      }
+      if (entry.name && entry.size !== undefined && entry.offset !== undefined && entry.offset + entry.size <= raw.length) {
+        out.push({ name: entry.name, type: entry.type ?? "", offset: entry.offset, size: entry.size });
+      }
+    }
+    pos += size;
+  }
+  return out;
+}
+
+/** The text of an embedded file by name (case-insensitive), or undefined. */
+export function embeddedText(raw: Buffer, name: string): string | undefined {
+  const wanted = name.toLowerCase();
+  const f = embeddedFiles(raw).find((e) => e.name.toLowerCase() === wanted);
+  return f ? raw.subarray(f.offset, f.offset + f.size).toString("utf8") : undefined;
 }
 
 /** Where the JSON object starting at `start` ends: brace matching that respects strings. */
@@ -143,11 +198,19 @@ export function liveOrder(all: M4lParameter[]): M4lParameter[] {
 }
 
 export function readAmxd(file: string, bytes?: Buffer): M4lDevice {
-  const { json, frozen } = bytes ? patcherJsonOf(bytes, file) : readPatcherJson(file);
+  const raw = bytes ?? fs.readFileSync(file);
+  const { json, frozen } = patcherJsonOf(raw, file);
   const all = parametersOf(json);
   const description = (json as { patcher?: { description?: unknown } }).patcher?.description;
   const device: M4lDevice = { file, frozen, all, parameters: liveOrder(all) };
   if (typeof description === "string" && description.trim()) device.description = description.trim();
+  const guideName = device.description && guideNameIn(device.description);
+  if (guideName) {
+    device.guideName = guideName;
+    // A frozen device carries its guide; an unfrozen one has it beside the file, which the registry reads.
+    const text = frozen ? embeddedText(raw, guideName) : undefined;
+    if (text !== undefined) device.guide = parseGuide(text, `${file}: ${guideName}`);
+  }
   return device;
 }
 

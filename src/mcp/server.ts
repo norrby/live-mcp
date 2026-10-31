@@ -351,7 +351,7 @@ export function createServer(deps: ServerDeps): McpServer {
     "device_guide",
     {
       description:
-        "The author's guide to a recognised Max for Live device: how the instrument behind the parameters works, by section. Without section: the title, the introduction and the section headings (list_parameters shows the headings too, as m4l.guide). With section: that section's text; a heading, or the start of one, or a word in one. whole=true gives the whole guide at once, for a small one. Read the section that fits the task before driving the device; the parameters' help texts say what each control does, the guide says how they work together.",
+        "The author's guide to a recognised Max for Live device (the .md file its description names, carried inside the device): how the instrument behind the parameters works, by section. Without section: the title, the introduction and the section headings (list_parameters shows the headings too, as m4l.guide). With section: that section's text; a heading, or the start of one, or a word in one. whole=true gives the whole guide at once, for a small one. Read the section that fits the task before driving the device; the parameters' help texts say what each control does, the guide says how they work together.",
       inputSchema: {
         device: address,
         section: z.string().optional().describe("A section heading from m4l.guide, or part of one"),
@@ -363,7 +363,8 @@ export function createServer(deps: ServerDeps): McpServer {
       const m4l = m4lFor(device);
       if (!m4l) throw new LiveError(`${d.name} is not a recognised Max for Live device, so it has no guide; list_parameters gives what Live knows about it`);
       const guide = m4l.guide;
-      if (!guide) throw new LiveError(`${d.name} has no guide: its author wrote none beside ${path.basename(m4l.file)} (${path.basename(m4l.file, path.extname(m4l.file))}.md). Its description (m4l.about) and the parameters' help texts in list_parameters are what there is`);
+      if (!guide && !m4l.guideName) throw new LiveError(`${d.name} has no guide: its description names no .md file. The description (m4l.about) and the parameters' help texts in list_parameters are what there is`);
+      if (!guide) throw new LiveError(`${d.name}'s description names ${m4l.guideName}, but ${m4l.frozen ? "the frozen device does not carry a file of that name" : `there is no such file beside ${path.basename(m4l.file)}`}. The description (m4l.about) and the parameters' help texts in list_parameters are what there is`);
       const headings = guide.sections.map((s) => s.name);
       if (whole) return { device, name: d.name, file: guide.file, title: guide.title, intro: guide.intro, sections: guide.sections };
       if (section === undefined) return { device, name: d.name, file: guide.file, title: guide.title, intro: guide.intro, sections: headings, hint: "device_guide with section reads one" };

@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import { M4lRegistry, type AmxdSource } from "../src/m4l/registry.js";
 
 /** An unfrozen .amxd file: header, "ptch", then the patcher JSON. */
-function amxd(params: [long: string, short: string][]): Buffer {
+function amxd(params: [long: string, short: string][], description?: string): Buffer {
   const boxes = params.map(([long, short]) => ({ box: { maxclass: "live.dial", saved_attribute_attributes: { valueof: { parameter_longname: long, parameter_shortname: short } } } }));
-  const json = Buffer.from(JSON.stringify({ patcher: { boxes } }));
+  const json = Buffer.from(JSON.stringify({ patcher: { description, boxes } }));
   const head = Buffer.alloc(32);
   head.write("ampf", 0, "latin1");
   head.write("ptch", 24, "latin1");
@@ -55,11 +55,11 @@ test("when Live forbids reading the folders, the registry reads the .amxd files 
   assert.equal(registry.files().length, 0, "a removed file is forgotten");
 });
 
-test("through the bridge, a guide beside the .amxd file comes with the device and is read again on its own when it changes", async () => {
+test("through the bridge, an unfrozen device's guide beside it comes with the device and is read again on its own when it changes", async () => {
   const files: Record<string, { mtime: number; bytes: Buffer }> = {
-    "/lib/Filter.amxd": { mtime: 1, bytes: amxd([["Cutoff Frequency", "Freq"], ["Resonance Amount", "Res"]]) },
-    "/lib/Filter.md": { mtime: 1, bytes: Buffer.from("# Filter\n\nA filter.\n\n## Cutoff\nWhere it starts to cut.\n") },
-    "/lib/README.md": { mtime: 1, bytes: Buffer.from("not a guide: no .amxd of that name") },
+    "/lib/Filter.amxd": { mtime: 1, bytes: amxd([["Cutoff Frequency", "Freq"], ["Resonance Amount", "Res"]], "A filter. Its guide is beside it as filter-guide.md.") },
+    "/lib/filter-guide.md": { mtime: 1, bytes: Buffer.from("# Filter\n\nA filter.\n\n## Cutoff\nWhere it starts to cut.\n") },
+    "/lib/README.md": { mtime: 1, bytes: Buffer.from("not a guide: no description names it") },
   };
   const reads: string[] = [];
   const source: AmxdSource = {
@@ -72,16 +72,16 @@ test("through the bridge, a guide beside the .amxd file comes with the device an
   const m = registry.match(["Device On", "Freq", "Res"]);
   assert.equal(m?.guide?.title, "Filter");
   assert.deepEqual(m?.guide?.sections.map((s) => s.name), ["Cutoff"]);
-  assert.deepEqual(reads, ["/lib/Filter.amxd", "/lib/Filter.md"], "the README is not a guide and is not read");
+  assert.deepEqual(reads, ["/lib/Filter.amxd", "/lib/filter-guide.md"], "the README is not named and is not read");
   assert.equal(registry.files().length, 1, "guides are not devices");
   await registry.refresh(); // match() and files() started a background rescan; let it finish before changing the files
 
-  files["/lib/Filter.md"] = { mtime: 2, bytes: Buffer.from("## Cutoff\nRewritten.\n") };
+  files["/lib/filter-guide.md"] = { mtime: 2, bytes: Buffer.from("## Cutoff\nRewritten.\n") };
   await registry.refresh();
-  assert.deepEqual(reads.slice(2), ["/lib/Filter.md"], "a changed guide is read again without the device file");
+  assert.deepEqual(reads.slice(2), ["/lib/filter-guide.md"], "a changed guide is read again without the device file");
   assert.equal(registry.match(["Device On", "Freq", "Res"])?.guide?.sections[0].text, "Rewritten.");
 
-  delete files["/lib/Filter.md"];
+  delete files["/lib/filter-guide.md"];
   await registry.refresh();
   assert.equal(registry.match(["Device On", "Freq", "Res"])?.guide, undefined, "a removed guide is forgotten");
   assert.equal(reads.length, 3);

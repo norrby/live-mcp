@@ -1,4 +1,5 @@
-// guide.ts – a device author's guide: a Markdown file beside the .amxd file with the same name (Synth.amxd, Synth.md).
+// guide.ts – a device author's guide: a Markdown file the device's description names ("… as device-guide.md"),
+// embedded in the frozen .amxd file as one of its dependencies, or beside an unfrozen one.
 // The parameters' help texts say what each control does; the guide says how the instrument behind them works, in
 // sections an assistant reads one at a time: a title (#), an introduction, then sections (##).
 
@@ -15,9 +16,12 @@ export interface M4lGuide {
   sections: GuideSection[];
 }
 
-/** The guide file that belongs to an .amxd file: the same path with .md in place of .amxd. */
-export function guideFileFor(amxdFile: string): string {
-  return amxdFile.replace(/\.amxd$/i, ".md");
+/** The .md file a device's description names, such as "device-guide.md" in "… is embedded in the device as device-guide.md." */
+export function guideNameIn(description: string): string | undefined {
+  const quoted = /["'`“]([^"'`“”/\\]+\.md)["'`”]/i.exec(description);
+  if (quoted) return quoted[1];
+  const bare = /(?:^|[\s(])([^\s"'`()/\\]+\.md)(?=[\s).,;:!?]|$)/i.exec(description);
+  return bare?.[1];
 }
 
 /** Splits a guide into title, introduction and sections. Plain text without headings is all introduction. */
