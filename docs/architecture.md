@@ -201,6 +201,9 @@ Recognising involves the **`.amxd` reader**, the **registry** and the **fingerpr
   background, so a device is recognised from the next call after the files arrive.
 - **The fingerprint** is the list of short names in that order. When a tool shows a device, the registry compares
   the device's names in Live with every file's fingerprint. Exactly one match means the device is recognised.
+  Several files with the same fingerprint count only when they describe the same parameters, such as a frozen and
+  an unfrozen copy: then the file named like the device in Live is the one, and when no file is (a device may
+  rename itself), `kind` names them all rather than guess.
 
 ```mermaid
 flowchart LR

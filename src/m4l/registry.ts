@@ -190,19 +190,28 @@ export class M4lRegistry {
    * the device in Live is the one, or else the first.
    */
   match(liveNames: string[], deviceName?: string): M4lDevice | undefined {
-    if (liveNames.length < 2) return undefined;
+    return this.matches(liveNames, deviceName)[0];
+  }
+
+  /**
+   * Every file that match() could mean, the one named like the device in Live first: one file, or several that
+   * describe the same parameters when no name tells them apart (a device may rename itself in Live). Empty when none
+   * or when the files that share the fingerprint differ, which no name can settle.
+   */
+  matches(liveNames: string[], deviceName?: string): M4lDevice[] {
+    if (liveNames.length < 2) return [];
     this.scan();
     const key = fingerprint(liveNames);
     const hits = [...this.entries.values()].filter((e) => e.fingerprint === key);
-    if (hits.length === 0) return undefined;
+    if (hits.length === 0) return [];
     const detail = (d: M4lDevice) => fingerprint(d.parameters.map((p) => `${p.longName}|${p.min}|${p.max}|${p.unit ?? ""}|${(p.choices ?? []).join(",")}`));
     const first = detail(hits[0].device);
     if (hits.every((h) => detail(h.device) === first)) {
       const named = deviceName ? hits.find((h) => path.basename(h.device.file, ".amxd") === deviceName) : undefined;
-      return (named ?? hits[0]).device;
+      return named ? [named.device] : hits.map((h) => h.device);
     }
     this.options.log?.(`ambiguous Max for Live match: ${hits.map((h) => h.device.file).join(" vs ")}`);
-    return undefined;
+    return [];
   }
 
   files(): { file: string; parameters: number; frozen: boolean }[] {

@@ -106,6 +106,8 @@ test("two files with the same parameters are told apart by the device's name in 
   assert.equal(registry.match(["Device On", "Freq", "Res"], "Filter-dev")?.file, "/lib/Filter-dev.amxd");
   assert.equal(registry.match(["Device On", "Freq", "Res"], "Filter renamed")?.file, "/lib/Filter-dev.amxd", "an unknown name falls back on the first file");
   assert.equal(registry.match(["Device On", "Freq", "Res"])?.file, "/lib/Filter-dev.amxd");
+  assert.deepEqual(registry.matches(["Device On", "Freq", "Res"], "Filter").map((m) => m.file), ["/lib/Filter.amxd"]);
+  assert.deepEqual(registry.matches(["Device On", "Freq", "Res"], "FilterBass").map((m) => m.file), ["/lib/Filter-dev.amxd", "/lib/Filter.amxd"], "a device renamed in Live may be either file");
 });
 
 test("an unreachable bridge leaves an explanation instead of an exception", async () => {

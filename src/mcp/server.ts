@@ -183,8 +183,10 @@ export function createServer(deps: ServerDeps): McpServer {
     return info;
   };
   const annotateDevice = (d: { address: string; kind: string; chains?: { devices: { address: string; kind: string }[] }[]; m4l?: string }) => {
-    const m = m4lFor(d.address);
-    if (m) d.kind = "Max for Live: " + path.basename(m.file, ".amxd");
+    const dev = live.device(d.address);
+    // Several files with the same parameters, none named like the device: kind names them all rather than guess.
+    const ms = registry.matches(dev.parameters.map((p) => p.name), dev.name);
+    if (ms.length) d.kind = "Max for Live: " + ms.map((m) => path.basename(m.file, ".amxd")).join(" or ");
     for (const c of d.chains ?? []) for (const dd of c.devices) annotateDevice(dd);
   };
 
