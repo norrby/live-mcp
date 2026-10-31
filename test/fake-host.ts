@@ -90,6 +90,9 @@ export class FakeLive {
     return id;
   }
   /** `holder` is a track or a chain */
+  tracks(): Id[] {
+    return this.get(this.song).tracks as Id[];
+  }
   /** The return tracks, for a test that adds a device where it shifts no other address. */
   returnTracks(): Id[] {
     return this.get(this.song).returnTracks as Id[];

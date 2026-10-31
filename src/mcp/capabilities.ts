@@ -25,7 +25,7 @@ export function capabilities(state: CapabilityState) {
     ],
     viaBridge: [
       { what: "audio and MIDI routing of tracks and of Max for Live devices, monitoring", available: bridge },
-      { what: "transport: play, stop, metronome, loop, position; arrangement recording on named tracks only", available: bridge },
+      { what: "transport: play, stop, metronome, loop, position; arrangement recording on named tracks only; session recording into one empty slot (record_clip)", available: bridge },
       { what: "selection: selected track, device and scene; scenes and session clips; firing clips and scenes", available: bridge },
       { what: "undo and redo", available: bridge },
       { what: "parameter values as Live displays them (dB, Hz, ms) for built-in devices, and setting a parameter by such a value", available: bridge },

@@ -563,6 +563,39 @@ class LiveRemote(ControlSurface):
         song.start_playing()
         return {"recording": [song.tracks[i].name for i in wanted], "start": at, "warnings": warnings}
 
+    def cmd_record_clip(self, track, slot, length=None, until_stopped=False):
+        """Session recording into one empty clip slot, checked and started on Live's main thread: the track must be
+        armed (or the selected MIDI track Live arms by itself), the slot empty, and Live not recording the arrangement.
+        Only that slot records. With a length (beats; default four bars) Live stops the recording itself and plays the
+        clip on; with until_stopped it runs until the slot or track is stopped. Recording begins at the next launch
+        quantization, after any count-in."""
+        song = self.song()
+        t = self._track(track)
+        if not t.can_be_armed:
+            raise ValueError("Not started: %s cannot record (only MIDI and audio tracks can)." % t.name)
+        if song.record_mode:
+            raise ValueError("Not started, nothing changed: Live is recording the arrangement. Stop first (transport stop).")
+        if not (t.arm or getattr(t, "implicit_arm", False)):
+            raise ValueError("Not started, nothing changed: %s is not armed. Arm it (set_track arm), or ask the user to." % t.name)
+        i = int(slot)
+        if i < 0 or i >= len(t.clip_slots):
+            raise ValueError("Not started: no clip slot %s on %s (there are %s)." % (i, t.name, len(t.clip_slots)))
+        s = t.clip_slots[i]
+        if s.has_clip:
+            raise ValueError('Not started, nothing changed: slot %s on %s holds "%s"; pick an empty slot.' % (i, t.name, s.clip.name))
+        if until_stopped:
+            beats = None
+            s.fire()
+        else:
+            beats = float(length) if length is not None else 4.0 * song.signature_numerator * 4.0 / song.signature_denominator
+            s.fire(record_length=beats)
+        quantization = str(song.clip_trigger_quantization).split(".")[-1]
+        count_in = getattr(song, "count_in_duration", None)
+        return {"track": t.name, "slot": i, "length": beats,
+                "armed": "armed" if t.arm else "the selected MIDI track, which Live arms by itself",
+                "quantization": quantization, "count_in_bars": count_in,
+                "was_playing": song.is_playing}
+
     def cmd_devices(self, track):
         t = self._track(track)
         return [{"index": i, "name": d.name, "class": d.class_name, "class_display": d.class_display_name,

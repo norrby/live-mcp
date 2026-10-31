@@ -36,7 +36,7 @@ const READ_ONLY = new Set(["get_set", "get_capabilities", "list_parameters", "fi
 const NOT_DESTRUCTIVE = new Set([
   "set_parameters", "set_parameter_display", "set_track", "set_tempo", "set_clip", "set_routing", "set_device_routing",
   "insert_device", "load_browser_item", "create_track", "create_clip", "create_audio_clip", "import_midi_file",
-  "transport", "selection", "scenes", "fire", "undo", "redo",
+  "transport", "selection", "scenes", "fire", "record_clip", "undo", "redo",
 ]);
 const IDEMPOTENT = new Set(["set_parameters", "set_parameter_display", "set_track", "set_tempo", "set_clip", "set_notes", "set_routing", "set_device_routing", "set_clip_automation", "clear_clip_automation"]);
 
@@ -157,6 +157,20 @@ export function createServer(deps: ServerDeps): McpServer {
     });
     if (!added.length) warnings.push("the take added no clip");
     return { added, replaced, ...(warnings.length ? { warnings } : {}) };
+  };
+  /** The clip a record_clip left in its slot, if the stop concerned that track (or any track); reported once. */
+  const sessionTakeReport = (trackIndex?: number) => {
+    const take = sessionTakes.get(live);
+    if (!take) return undefined;
+    const i = live.song.tracks.findIndex((t) => live.id(t) === take.track);
+    if (i < 0) {
+      sessionTakes.delete(live);
+      return { warning: "the track recorded into is gone" };
+    }
+    if (trackIndex !== undefined && trackIndex !== i) return undefined;
+    sessionTakes.delete(live);
+    const c = live.song.tracks[i].clipSlots[take.slot]?.clip;
+    return c ? live.clipInfo(c, `t${i}/s${take.slot}`) : { warning: `slot t${i}/s${take.slot} got no clip` };
   };
   const annotateDevice = (d: { address: string; kind: string; chains?: { devices: { address: string; kind: string }[] }[]; m4l?: string }) => {
     const m = m4lFor(d.address);
@@ -608,6 +622,10 @@ export function createServer(deps: ServerDeps): McpServer {
         if (tracks) throw new LiveError("tracks go with action record only");
         if (start !== undefined && action !== "play") throw new LiveError("start goes with action play or record only");
         const status = await bridge.call<Record<string, unknown>>("transport", [], action ? { action, ...(start !== undefined ? { start } : {}) } : {});
+        if (sessionTakes.has(live) && (action === "stop" || action === "stop_all_clips")) {
+          const recorded = sessionTakeReport();
+          if (recorded) return { ...status, recorded };
+        }
         if (!takes.has(live)) return status;
         // A take the user stopped in Live's window ends here, so its report does not take in clips made afterwards.
         const endedInLive = !action && status.record_mode === false && status.is_playing === false;
@@ -1078,13 +1096,47 @@ export function createServer(deps: ServerDeps): McpServer {
       description: "Launch a scene (scene only), a session clip (track + clip slot index), or stop a track's clips (track only)." + viaBridge,
       inputSchema: { track: address.optional(), clip: z.number().int().min(0).optional(), scene: z.number().int().min(0).optional() },
     },
-    guarded(({ track, clip, scene }) => {
+    guarded(async ({ track, clip, scene }) => {
       if (track && scene !== undefined) throw new LiveError("give track and clip (the slot index) to launch a clip, or scene alone to launch a scene; track and scene together are not a target");
       const kwargs: Record<string, unknown> = {};
       if (track) kwargs.track = bridgeTrackIndex(live, track);
       if (clip !== undefined) kwargs.clip = clip;
       if (scene !== undefined) kwargs.scene = scene;
-      return bridge.call("fire", [], kwargs);
+      const fired = await bridge.call<Record<string, unknown>>("fire", [], kwargs);
+      if (!track || !sessionTakes.has(live)) return fired;
+      const recorded = sessionTakeReport(kwargs.track as number);
+      return recorded ? { ...fired, recorded } : fired;
+    }),
+  );
+
+  server.registerTool(
+    "record_clip",
+    {
+      description:
+        "Record a new session clip into an empty slot of an armed track (the Session View; arrangement recording is transport record). In one step Live MCP checks on Live's own thread that the track is armed (or is the selected MIDI track, which Live arms by itself), that the slot is empty and that Live is not recording the arrangement; otherwise nothing happens and the answer says why. Only that slot records. Recording starts at the next launch quantization (the answer names it, and any count-in) and, with length (beats; default four bars of the set's time signature), Live stops it by itself and plays the clip on: get_clips then shows the clip, and measure_audio clip reads it. untilStopped: true records until fire (the track alone, or the same slot) or transport stop, which then answer with the clip recorded." + viaBridge,
+      inputSchema: {
+        track: address,
+        slot: z.number().int().min(0).describe("An empty clip slot, index from 0"),
+        length: z.number().positive().optional().describe("Beats; default four bars"),
+        untilStopped: z.boolean().optional().describe("Record until stopped instead of a fixed length"),
+      },
+    },
+    guarded(async ({ track, slot, length, untilStopped }) => {
+      if (length !== undefined && untilStopped) throw new LiveError("give length or untilStopped, not both");
+      const t = live.track(track);
+      const index = live.song.tracks.indexOf(t);
+      if (index < 0) throw new LiveError(`${track} cannot record: only MIDI and audio tracks can`);
+      if (!t.clipSlots[slot]) throw new LiveError(`"${track}/s${slot}": no clip slot ${slot} (there are ${t.clipSlots.length})`);
+      const holding = t.clipSlots[slot].clip;
+      if (holding) throw new LiveError(`slot ${track}/s${slot} holds "${holding.name}"; pick an empty slot`);
+      const started = await bridge.call<Record<string, unknown>>("record_clip", [index, slot], {
+        ...(length !== undefined ? { length } : {}),
+        ...(untilStopped ? { until_stopped: true } : {}),
+      });
+      sessionTakes.set(live, { track: live.id(t), slot });
+      return { ...started, slot: `${track}/s${slot}`, note: untilStopped
+        ? "recording until fire (this track, or this slot again) or transport stop; they answer with the clip"
+        : `Live stops the recording itself after ${started.length} beats from the quantized start and plays the clip on; get_clips ${track} shows it, measure_audio clip reads it` };
     }),
   );
 
@@ -1137,6 +1189,8 @@ export function createServer(deps: ServerDeps): McpServer {
  * different servers.
  */
 const takes = new WeakMap<LiveAdapter, { tracks: string[]; before: Map<string, Set<string>> }>();
+/** The session slot a record_clip is recording into, per Live, so a stop can answer with the clip. */
+const sessionTakes = new WeakMap<LiveAdapter, { track: string; slot: number }>();
 
 /** Neither Live's Python API nor the Extensions API reaches these fields; the model must ask the user. */
 const NO_DEVICE_IO = "The MIDI To and Audio From of an External Instrument, and the Audio To/From of an External Audio Effect, are not in Live's APIs and can only be set in Live's window.";

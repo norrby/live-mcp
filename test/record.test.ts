@@ -22,13 +22,16 @@ test("record names its tracks to the bridge, and stop reports what the take adde
       const result =
         call.cmd === "arms" ? [{ index: 0, implicit_arm: true }, { index: 1, implicit_arm: false }]
         : call.cmd === "record" ? { recording: ["1-MIDI"], start: call.kwargs.start, warnings: [] }
+        : call.cmd === "record_clip" ? { track: "2-Audio", slot: call.args[1], length: call.kwargs.until_stopped ? null : call.kwargs.length ?? 16, quantization: "q_bar" }
+        : call.cmd === "fire" ? { fired: "stop", track: "2-Audio" }
         : { is_playing: false, record_mode: false };
       sock.end(JSON.stringify({ ok: true, result }) + "\n");
     });
   });
   await new Promise<void>((r) => fakeRemote.listen(0, "127.0.0.1", r));
   t.after(() => fakeRemote.close());
-  const live = new LiveAdapter(initialize(smallSet().activation(), "1.0.0"));
+  const fake = smallSet();
+  const live = new LiveAdapter(initialize(fake.activation(), "1.0.0"));
   const bridge = new Bridge({ port: (fakeRemote.address() as net.AddressInfo).port });
   const changes = new ChangeTracker(live);
   // Over HTTP every request gets a server of its own, so every call here does too: record and stop meet different ones.
@@ -77,4 +80,27 @@ test("record names its tracks to the bridge, and stop reports what the take adde
   assert.deepEqual(ended.take.added, []);
   await call("create_clip", { track: "t0", start: 96, length: 4, name: "later" });
   assert.equal((await call("transport", { action: "stop" })).data.take, undefined, "a clip made after the take is not reported as its");
+
+  // Session recording: one empty slot of one track, checked here and on Live's thread; the stop answers with the clip.
+  assert.match((await call("record_clip", { track: "t0", slot: 1 })).data, /holds "Intro"/);
+  assert.match((await call("record_clip", { track: "t1", slot: 5 })).data, /no clip slot 5/);
+  assert.match((await call("record_clip", { track: "r0", slot: 0 })).data, /only MIDI and audio tracks/);
+  assert.match((await call("record_clip", { track: "t1", slot: 0, length: 4, untilStopped: true })).data, /not both/);
+  const clip = await call("record_clip", { track: "t1", slot: 0, length: 8 });
+  assert.ok(clip.ok, JSON.stringify(clip.data));
+  const rc = asked.find((x) => x.cmd === "record_clip")!;
+  assert.deepEqual([rc.args, rc.kwargs], [[1, 0], { length: 8 }], "the bridge gets the track index, the slot and the length");
+  assert.equal(clip.data.slot, "t1/s0");
+  assert.match(clip.data.note, /stops the recording itself after 8 beats/);
+  // What Live would have recorded into the slot, then the track's clips are stopped.
+  fake.addClip(fake.tracks()[1], 0, "2-Audio 1", 8);
+  assert.equal((await call("fire", { track: "t0" })).data.recorded, undefined, "stopping another track does not end the take");
+  const halted = (await call("fire", { track: "t1" })).data;
+  assert.equal(halted.recorded.address, "t1/s0");
+  assert.equal(halted.recorded.name, "2-Audio 1");
+  assert.equal((await call("fire", { track: "t1" })).data.recorded, undefined, "the clip is reported once");
+  const open = await call("record_clip", { track: "t1", slot: 1, untilStopped: true });
+  assert.ok(open.ok, JSON.stringify(open.data));
+  assert.match(open.data.note, /until fire/);
+  assert.equal((await call("transport", { action: "stop" })).data.recorded.warning, "slot t1/s1 got no clip");
 });
