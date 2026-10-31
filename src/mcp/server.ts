@@ -820,7 +820,7 @@ export function createServer(deps: ServerDeps): McpServer {
       }
       try {
         if (fs.statSync(file).size > 200 * 1024 * 1024) throw new LiveError("the rendered file is larger than 200 MB; measure a shorter range");
-        return { track, from: start, to: end, ...measure(parseAudio(fs.readFileSync(file))), note: "the track's clips before its effects; null dBFS or LUFS means no signal at all (minus infinity)" };
+        return { track, from: start, to: end, ...measure(parseAudio(fs.readFileSync(file))), note: "the track's clips before its effects; null dBFS or LUFS means no signal at all (minus infinity), unless lufsNote says the range was too short" };
       } finally {
         fs.rm(file, { force: true }, () => {});
       }

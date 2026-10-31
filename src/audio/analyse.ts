@@ -16,6 +16,8 @@ export interface Measurement {
   rmsDbfs: number[];
   /** integrated loudness; -Infinity (reported as null) when everything is below the absolute gate */
   lufs: number | null;
+  /** why lufs is null when the range is too short to measure it, which is not the same as no signal */
+  lufsNote?: string;
   clippedSamples: number;
   /** nothing above -80 dBFS at any moment */
   silent: boolean;
@@ -190,6 +192,7 @@ export function measure(audio: Audio, slices = 32): Measurement {
     peakDbfs: peak,
     rmsDbfs: rms,
     lufs: Number.isFinite(lufs) ? round(lufs) : null,
+    ...(frames < 0.4 * audio.sampleRate ? { lufsNote: "the range is shorter than the 0.4 s LUFS needs; measure a longer one" } : {}),
     clippedSamples: clipped,
     silent: peak.every((p) => !(p > -80)),
     envelopeDbfs: envelope,
