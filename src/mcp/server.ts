@@ -393,7 +393,7 @@ export function createServer(deps: ServerDeps): McpServer {
   server.registerTool(
     "set_parameters",
     {
-      description: "Set one or more parameters in a single undo step. Values are in Live's internal units, within the min..max that list_parameters reports (quantized: the index of the choice). Every value is checked against its range first; if one is wrong, nothing is changed. Returns before/after per parameter; should Live itself still reject a value, that row has an error and the others are set. All changes in one call start at the same time, in no guaranteed order: when one parameter decides what others mean (a step or page selector, a mode), set it in a call of its own first. A parameter its device's author marked askFirst is refused unless the user asked for that change and the change says userAsked: true.",
+      description: "Set one or more parameters in a single undo step. Values are in Live's internal units, within the min..max that list_parameters reports (quantized: the index of the choice); internal units often do not scale like what Live shows (a filter's 0.5 is not half its Hz), so to aim at a shown value use set_parameter_display, and list_parameters display=true shows what each value means. Every value is checked against its range first; if one is wrong, nothing is changed. Returns before/after per parameter; should Live itself still reject a value, that row has an error and the others are set. All changes in one call start at the same time, in no guaranteed order: when one parameter decides what others mean (a step or page selector, a mode), set it in a call of its own first. A parameter its device's author marked askFirst is refused unless the user asked for that change and the change says userAsked: true.",
       inputSchema: {
         changes: z
           .array(
@@ -458,7 +458,7 @@ export function createServer(deps: ServerDeps): McpServer {
     "insert_device",
     {
       description: 'Insert a built-in Live device with its default preset by name ("Reverb", "Operator", "EQ Eight", "Auto Filter"...) into a track or rack chain. For a saved preset, a Max for Live device or a plug-in use load_browser_item.',
-      inputSchema: { into: address.describe("Track or chain address"), device: z.string(), index: z.number().int().min(0).optional().describe("Position in the chain; end if omitted") },
+      inputSchema: { into: address.describe("Track or chain address"), device: z.string(), index: z.number().int().min(0).optional().describe("Position in the chain, from 0 (0 = first); end if omitted") },
     },
     guarded(async ({ into, device, index }) => {
       const holder = live.deviceHolder(into);
@@ -528,7 +528,7 @@ export function createServer(deps: ServerDeps): McpServer {
 
   server.registerTool(
     "create_track",
-    { description: "Create a MIDI or audio track (after the selected track).", inputSchema: { kind: z.enum(["midi", "audio"]), name: z.string().optional() } },
+    { description: "Create a MIDI or audio track (after the selected track). The tracks after it move up one address (t2 becomes t3): keep the #id it answers with.", inputSchema: { kind: z.enum(["midi", "audio"]), name: z.string().optional() } },
     guarded(async ({ kind, name }) => {
       const t = kind === "midi" ? await live.song.createMidiTrack() : await live.song.createAudioTrack();
       if (name) t.name = name;
