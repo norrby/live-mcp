@@ -1,12 +1,14 @@
 {
   "name": "live-mcp",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "MCP server for Ableton Live, running inside Live as an extension",
   "license": "MIT",
   "private": true,
   "main": "dist/extension.js",
   "type": "commonjs",
-  "engines": { "node": ">=24.14.1" },
+  "engines": {
+    "node": ">=24.14.1"
+  },
   "scripts": {
     "build": "tsc --noEmit && tsx build.mts --production",
     "build:dev": "tsc --noEmit && tsx build.mts",
