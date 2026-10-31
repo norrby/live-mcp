@@ -228,7 +228,7 @@ export function createServer(deps: ServerDeps): McpServer {
   const capabilityState = async () => ({ bridgeReachable: await bridge.ping(), knownDevices: registry.files().length, amxdVia: registry.via, readOnly: deps.readOnly });
 
   server.registerResource("set", "live://set", { description: "The open Live set: tracks, devices, addresses", mimeType: "application/json" }, async (uri) => ({
-    contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(overview(), bigintSafe) }],
+    contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(await overview(), bigintSafe) }],
   }));
   server.registerResource("capabilities", "live://capabilities", { description: "What this server can and cannot do in Live, and why", mimeType: "application/json" }, async (uri) => ({
     contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(capabilities(await capabilityState())) }],
