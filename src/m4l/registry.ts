@@ -186,9 +186,10 @@ export class M4lRegistry {
   /**
    * The file whose parameter fingerprint equals the names Live reports, or undefined. A device with no parameters of
    * its own is never matched (every such device looks the same). Several files with the same fingerprint count as a
-   * match only when they describe the same parameters (a frozen and an unfrozen copy, say).
+   * match only when they describe the same parameters (a frozen and an unfrozen copy, say); then the file named like
+   * the device in Live is the one, or else the first.
    */
-  match(liveNames: string[]): M4lDevice | undefined {
+  match(liveNames: string[], deviceName?: string): M4lDevice | undefined {
     if (liveNames.length < 2) return undefined;
     this.scan();
     const key = fingerprint(liveNames);
@@ -196,7 +197,10 @@ export class M4lRegistry {
     if (hits.length === 0) return undefined;
     const detail = (d: M4lDevice) => fingerprint(d.parameters.map((p) => `${p.longName}|${p.min}|${p.max}|${p.unit ?? ""}|${(p.choices ?? []).join(",")}`));
     const first = detail(hits[0].device);
-    if (hits.every((h) => detail(h.device) === first)) return hits[0].device;
+    if (hits.every((h) => detail(h.device) === first)) {
+      const named = deviceName ? hits.find((h) => path.basename(h.device.file, ".amxd") === deviceName) : undefined;
+      return (named ?? hits[0]).device;
+    }
     this.options.log?.(`ambiguous Max for Live match: ${hits.map((h) => h.device.file).join(" vs ")}`);
     return undefined;
   }

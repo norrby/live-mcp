@@ -91,6 +91,23 @@ test("through the bridge, an unfrozen device's guide is asked for by the name it
   assert.equal(registry.match(["Device On", "Freq", "Res"])?.guide, undefined, "a removed guide is forgotten");
 });
 
+test("two files with the same parameters are told apart by the device's name in Live, and the first is taken without one", async () => {
+  const params: [string, string][] = [["Cutoff Frequency", "Freq"], ["Resonance Amount", "Res"]];
+  const files: Record<string, Buffer> = { "/lib/Filter-dev.amxd": amxd(params), "/lib/Filter.amxd": amxd(params) };
+  const source: AmxdSource = {
+    list: async () => Object.keys(files).map((file) => ({ file, mtime: 1 })),
+    read: async (file) => files[file],
+    guide: async () => undefined,
+  };
+  const registry = new M4lRegistry({ directories: ["/lib"], fallback: source });
+  registry.via = "bridge";
+  await registry.refresh();
+  assert.equal(registry.match(["Device On", "Freq", "Res"], "Filter")?.file, "/lib/Filter.amxd");
+  assert.equal(registry.match(["Device On", "Freq", "Res"], "Filter-dev")?.file, "/lib/Filter-dev.amxd");
+  assert.equal(registry.match(["Device On", "Freq", "Res"], "Filter renamed")?.file, "/lib/Filter-dev.amxd", "an unknown name falls back on the first file");
+  assert.equal(registry.match(["Device On", "Freq", "Res"])?.file, "/lib/Filter-dev.amxd");
+});
+
 test("an unreachable bridge leaves an explanation instead of an exception", async () => {
   const registry = new M4lRegistry({
     directories: ["/lib"],

@@ -105,7 +105,10 @@ export function createServer(deps: ServerDeps): McpServer {
   (server as unknown as { registerTool: unknown }).registerTool = (name: string, config: { annotations?: ToolAnnotations }, cb: unknown) =>
     deps.readOnly && !READ_ONLY.has(name) ? undefined : register(name, { ...config, annotations: { ...annotationsFor(name), ...config.annotations } } as never, cb as never);
 
-  const m4lFor = (deviceAddress: string): M4lDevice | undefined => registry.match(live.device(deviceAddress).parameters.map((p) => p.name));
+  const m4lFor = (deviceAddress: string): M4lDevice | undefined => {
+    const d = live.device(deviceAddress);
+    return registry.match(d.parameters.map((p) => p.name), d.name);
+  };
 
   const overview = async () => {
     const song = live.song;
