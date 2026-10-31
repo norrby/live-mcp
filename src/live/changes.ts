@@ -123,13 +123,16 @@ export class ChangeTracker {
 
   async changesSince(cursor: string, scope?: string): Promise<{ cursor: string; first: boolean; since?: number; changes: Change[]; summary?: string; notRead?: string[] }> {
     const now = await takeSnapshot(this.live, scope);
-    const prev = this.snapshots.get(cursor);
-    this.snapshots.delete(cursor);
-    this.snapshots.set(cursor, now);
+    // One snapshot per cursor and scope: compared with a snapshot of another scope, every track outside one of them
+    // would look added or removed.
+    const key = `${cursor}\u0000${scope ?? ""}`;
+    const prev = this.snapshots.get(key);
+    this.snapshots.delete(key);
+    this.snapshots.set(key, now);
     while (this.snapshots.size > this.max) this.snapshots.delete(this.snapshots.keys().next().value as string);
     const notRead = now.truncated.length ? now.truncated : undefined;
     const note = notRead ? `; parameter values of ${notRead.length} device(s) were not read (snapshot budget of ${MAX_PARAMETERS_PER_SNAPSHOT} parameters): use scope to watch one track at a time` : "";
-    if (!prev) return { cursor, first: true, changes: [], summary: "first call for this cursor: snapshot taken, call again later to see what changed" + note, notRead };
+    if (!prev) return { cursor, first: true, changes: [], summary: "first call for this cursor and scope: snapshot taken, call again later to see what changed" + note, notRead };
     return { cursor, first: false, since: prev.at, changes: diff(prev, now), summary: note ? note.slice(2) : undefined, notRead };
   }
 }

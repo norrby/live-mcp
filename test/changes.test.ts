@@ -54,3 +54,13 @@ test("devices beyond the snapshot budget are reported as not read, never as unch
   assert.equal(second.changes.length, 0);
   assert.equal((await tracker.changesSince("c", "t0")).notRead, undefined, "a scoped watch fits the budget");
 });
+
+test("a cursor watched with and without a scope keeps a snapshot for each, so no track looks added or removed", async () => {
+  const live = new LiveAdapter(initialize(smallSet().activation(), "1.0.0"));
+  const tracker = new ChangeTracker(live);
+  await tracker.changesSince("d", "t0");
+  await tracker.changesSince("d");
+  await live.setValues([{ address: "t0/d0/p1", value: 3 }]);
+  assert.deepEqual((await tracker.changesSince("d", "t0")).changes.map((c) => c.address), ["t0/d0/p1"]);
+  assert.deepEqual((await tracker.changesSince("d")).changes.map((c) => c.address), ["t0/d0/p1"]);
+});
