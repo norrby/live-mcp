@@ -300,6 +300,25 @@ never rebuild while a device is loading.
 
 **Lesson.** A host that runs your code inside itself is not isolated from your restarts.
 
+### Undo did not remove the device it had just loaded
+
+**What happened.** An assistant loaded a Max for Live editor with `load_browser_item`, changed its mind and called
+`undo`. The device stayed. Three undos later it still stayed. A built-in Max device loaded the same way was gone after
+one undo. On a test track, nineteen undos left the editor in place and changed nothing visible in the set; only the
+device's own ready flag had gone back to "loading" on the first.
+
+**Why.** Live's Edit menu gave the answer: the next step read *Undo Change "Osc 3 Table Note"*. The editor sets itself
+up when it loads, and part of that setup switches the banks of its table controls, once per oscillator. Live counts
+each of those as a change of the parameter in that bank slot, and so as an undo step, although no value the API shows
+had moved. The device's load sat under a pile of its own steps.
+
+**Fix.** On the device's side: start in the state the device is built with, so that nothing is written when it
+loads. Live MCP cannot tell, when `undo` is asked for, how many steps a device added; the `undo` tool is still one
+step, as Live's own Cmd+Z is.
+
+**Lesson.** Everything a Max for Live device writes to its parameters at load becomes an undo step for the user. A
+device that is quiet at load is also one that undo removes in one go.
+
 ## And when it works
 
 Not every surprise was a bug. Asked for a bass whose low-pass filter opens with how hard each note is played, an
