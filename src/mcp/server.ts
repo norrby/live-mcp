@@ -11,7 +11,7 @@ import { explain } from "../live/errors.js";
 import { ChangeTracker } from "../live/changes.js";
 import { M4lRegistry, isForbidden } from "../m4l/registry.js";
 import type { M4lDevice, M4lParameter } from "../m4l/amxd.js";
-import { AudioTrack, Device, Track } from "@ableton-extensions/sdk";
+import { AudioTrack, Device, MidiTrack, Track } from "@ableton-extensions/sdk";
 import { Bridge, BridgeError } from "../bridge/client.js";
 import { capabilities } from "./capabilities.js";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
@@ -418,10 +418,15 @@ export function createServer(deps: ServerDeps): McpServer {
     { description: "Rename, mute, solo or arm a track.", inputSchema: { track: address, name: z.string().optional(), mute: z.boolean().optional(), solo: z.boolean().optional(), arm: z.boolean().optional() } },
     guarded(async ({ track, name, mute, solo, arm }) => {
       const t = live.track(track);
-      if (name !== undefined) t.name = name;
-      if (mute !== undefined) t.mute = mute;
-      if (solo !== undefined) t.solo = solo;
-      if (arm !== undefined) t.arm = arm;
+      // Checked first, so a field Live would refuse does not leave the others changed.
+      if (t === live.song.mainTrack && (mute !== undefined || solo !== undefined || arm !== undefined)) throw new LiveError("Nothing was changed: the main track has no mute, solo or arm");
+      if (arm !== undefined && !(t instanceof MidiTrack || t instanceof AudioTrack)) throw new LiveError(`Nothing was changed: ${t.name} cannot be armed; only MIDI and audio tracks can`);
+      live.context.withinTransaction(() => {
+        if (name !== undefined) t.name = name;
+        if (mute !== undefined) t.mute = mute;
+        if (solo !== undefined) t.solo = solo;
+        if (arm !== undefined) t.arm = arm;
+      });
       return (await withImplicitArm([live.trackInfo(t, track)]))[0];
     }),
   );
