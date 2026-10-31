@@ -125,8 +125,8 @@ An assistant works fast and sometimes gets things wrong. Live MCP makes mistakes
   preset, and ask the assistant to load that preset.
 - **Ask it what it can do.** The assistant can ask Live MCP itself, and gets an honest answer for your setup.
 - **Max for Live devices can explain themselves.** Live MCP reads the help text Live shows in its Info View for
-  each control, and the device's description, and gives them to the assistant. See
-  [For Max for Live authors](docs/development.md#for-max-for-live-authors).
+  each control, the device's description, and a guide the author put beside the device file, and gives them to the
+  assistant a piece at a time. See [For Max for Live authors](docs/development.md#for-max-for-live-authors).
 
 Not affiliated with or endorsed by Ableton. Use at your own risk.
 

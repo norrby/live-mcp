@@ -196,8 +196,9 @@ Recognising involves the **`.amxd` reader**, the **registry** and the **fingerpr
   long name.
 - **The registry** (`registry.ts`) reads every `.amxd` file in the configured folders, and reads a file again only
   when it has changed. An installed extension may not read those folders, so then the registry asks the bridge to
-  list and read the files instead (the commands `amxd_list` and `amxd_read`, which read `.amxd` files and nothing
-  else). That happens in the background, so a device is recognised from the next call after the files arrive.
+  list and read the files instead (the commands `amxd_list` and `amxd_read`, which read `.amxd` files and the `.md`
+  guides beside them, and nothing else). That happens in the background, so a device is recognised from the next
+  call after the files arrive.
 - **The fingerprint** is the list of short names in that order. When a tool shows a device, the registry compares
   the device's names in Live with every file's fingerprint. Exactly one match means the device is recognised.
 
@@ -214,10 +215,15 @@ flowchart LR
 A frozen and an unfrozen copy of the same device have the same fingerprint and the same parameters, and count as
 one match.
 
-A recognised device also brings two things the assistant needs to drive it without being told:
+A recognised device also brings what the assistant needs to drive it without being told:
 
 - **The device's own description,** the text its author wrote in the patcher's description. It reaches the
   assistant as `about`, so an author can say there how the device is meant to be used.
+- **The author's guide,** a Markdown file beside the `.amxd` file with the same name (`guide.ts`). Where the help
+  texts explain one control each, the guide explains the instrument: signal path, tables, patches, limits. The
+  registry reads it with the device and again when it changes. The assistant gets its section headings with the
+  parameters (`m4l.guide`) and one section at a time through `device_guide`, so a large manual never lands in a
+  small model's answer.
 - **The controls Live does not see,** such as stored tables or hidden buttons, each with the visible parameters
   whose names start the same way. A step editor stores its table out of Live's reach but is edited through
   parameters like "Osc 1 Table Step" and "Osc 1 Table Wave", and this is how the assistant finds them.
