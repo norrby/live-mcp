@@ -55,7 +55,7 @@ on its first start, and `connect.txt` next to it with the commands that connect 
   "port": 9871,
   "token": "",
   "userLibrary": "/Users/you/Music/Ableton/User Library",
-  "amxdDirectories": ["/Users/you/Music/Ableton/User Library/Presets"],
+  "amxdDirectories": ["/Users/you/Music/Ableton/User Library"],
   "bridge": { "port": 9870 }
 }
 ```
@@ -66,7 +66,7 @@ on its first start, and `connect.txt` next to it with the commands that connect 
 | `token` | a password every client must send; `""` (the default) means none |
 | `readOnly` | `true` offers clients only the tools that read; nothing in the set can be changed |
 | `userLibrary` | Live's User Library; set it if you moved yours |
-| `amxdDirectories` | folders searched for `.amxd` files, to recognise Max for Live devices in the set |
+| `amxdDirectories` | folders searched for `.amxd` files, to recognise Max for Live devices in the set; the whole User Library by default. The folders under Places in Live's browser, and any file the saved set names, are read as well |
 | `bridge.port` | the port LiveRemote listens on |
 | `bridge.token`, `bridge.tokenFile` | only if you gave LiveRemote a token: the token, or a file that holds it |
 

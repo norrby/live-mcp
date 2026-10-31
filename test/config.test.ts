@@ -12,7 +12,11 @@ test("loadConfig starts without a token, keeps a chosen one, defaults the User L
   const first = loadConfig(dir, quiet);
   assert.equal(first.token, "");
   assert.equal(first.userLibrary, defaultUserLibrary());
-  assert.deepEqual(first.amxdDirectories, [path.join(first.userLibrary, "Presets")]);
+  assert.deepEqual(first.amxdDirectories, [first.userLibrary], "the whole User Library");
+  fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ userLibrary: "/lib", amxdDirectories: ["/lib/Presets"] }));
+  assert.deepEqual(loadConfig(dir, quiet).amxdDirectories, ["/lib"], "the old default, Presets alone, becomes the whole User Library");
+  fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ userLibrary: "/lib", amxdDirectories: ["/lib/Presets", "/elsewhere"] }));
+  assert.deepEqual(loadConfig(dir, quiet).amxdDirectories, ["/lib/Presets", "/elsewhere"], "a list the user chose is kept");
   assert.equal(first.bridge.tokenFile, undefined, "LiveRemote needs no token by default");
 
   fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ token: "a-token-of-twenty-chars", bridge: { port: 1, tokenFile: "/x" } }));

@@ -15,7 +15,7 @@ export interface Config {
   amxdDirectories: string[];
   /** LiveRemote needs no token unless one was given to it; then the same token here, or the file that holds it */
   bridge: { port: number; tokenFile?: string; token?: string };
-  /** Live's User Library: Max for Live devices are searched in its Presets folder */
+  /** Live's User Library: Max for Live devices are searched in all of it by default */
   userLibrary: string;
   /** true: clients get only the tools that read; nothing in the set can be changed */
   readOnly: boolean;
@@ -47,7 +47,9 @@ export function loadConfig(storageDirectory: string | undefined, log: (...a: unk
   else if (data.token !== "" && data.token.length < 16) (data.token = randomBytes(24).toString("base64url")), (changed = true);
   if (typeof data.userLibrary !== "string" || !data.userLibrary) (data.userLibrary = defaultUserLibrary()), (changed = true);
   if (typeof data.readOnly !== "boolean") (data.readOnly = false), (changed = true);
-  if (!Array.isArray(data.amxdDirectories)) (data.amxdDirectories = [path.join(data.userLibrary, "Presets")]), (changed = true);
+  if (!Array.isArray(data.amxdDirectories)) (data.amxdDirectories = [data.userLibrary]), (changed = true);
+  // The default was the Presets folder alone until devices dropped anywhere in the User Library were missed.
+  else if (data.amxdDirectories.length === 1 && data.amxdDirectories[0] === path.join(data.userLibrary, "Presets")) (data.amxdDirectories = [data.userLibrary]), (changed = true);
   if (!data.bridge || typeof data.bridge !== "object") (data.bridge = { port: DEFAULT_BRIDGE_PORT }), (changed = true);
   if (typeof data.bridge.port !== "number") (data.bridge.port = DEFAULT_BRIDGE_PORT), (changed = true);
   if (changed) {
