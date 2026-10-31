@@ -59,12 +59,15 @@ def load_token():
 AMXD_MAX_FILES = 500
 AMXD_MAX_DEPTH = 6
 AMXD_MAX_BYTES = 32 * 1024 * 1024
+AMXD_ENDINGS = (".amxd", ".md")
 
 
 def amxd_list(dirs):
-    """The .amxd files under the given folders, with modification time and size. Live extensions may not read
-    outside their own folder, so the extension asks the bridge; only .amxd files are listed or read."""
+    """The .amxd files under the given folders, and the .md guides beside them, with modification time and size.
+    Live extensions may not read outside their own folder, so the extension asks the bridge; only .amxd and .md
+    files are listed or read."""
     found = []
+    guides = {}  # path without its ending -> the .md file's entry; kept only beside an .amxd file of that name
 
     def walk(d, depth):
         if depth > AMXD_MAX_DEPTH or len(found) >= AMXD_MAX_FILES:
@@ -81,9 +84,16 @@ def amxd_list(dirs):
             elif e.is_file() and e.name.lower().endswith(".amxd"):
                 st = e.stat()
                 found.append({"file": e.path, "mtime": st.st_mtime * 1000, "size": st.st_size})
+            elif e.is_file() and e.name.lower().endswith(".md"):
+                st = e.stat()
+                guides[e.path[:-3]] = {"file": e.path, "mtime": st.st_mtime * 1000, "size": st.st_size}
 
     for d in dirs or []:
         walk(os.path.expanduser(str(d)), 0)
+    for f in list(found):
+        guide = guides.get(f["file"][:-5])
+        if guide:
+            found.append(guide)
     return found
 
 
@@ -122,8 +132,8 @@ def audio_read(path, offset=0, size=AUDIO_CHUNK_MAX):
 
 
 def amxd_read(path):
-    """One .amxd file as base64."""
-    return _read_b64(path, (".amxd",), "an .amxd file")
+    """One .amxd file, or the .md guide beside one, as base64."""
+    return _read_b64(path, AMXD_ENDINGS, "an .amxd or .md file")
 
 
 def midi_read(path):
