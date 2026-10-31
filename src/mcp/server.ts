@@ -320,7 +320,7 @@ export function createServer(deps: ServerDeps): McpServer {
   server.registerTool(
     "find_parameters",
     {
-      description: "Find parameters by name across the set (case-insensitive substring of the short name, or of the long name for recognised Max for Live devices). Returns addresses to use with get_parameters/set_parameters, with range, choices and, for Max for Live devices, the help text.",
+      description: "Find parameters by name across the set (case-insensitive substring of the short name, or of the long name for recognised Max for Live devices). Live's names are short (Vel, Freq, Res, Env, Amt): search a short stem such as \"vel\", not \"velocity\". Returns addresses to use with get_parameters/set_parameters, with range, choices and, for Max for Live devices, the help text.",
       inputSchema: { query: z.string().min(1), device: address.optional().describe("Limit to one device") },
     },
     guarded(({ query, device }) => {
