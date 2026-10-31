@@ -207,6 +207,99 @@ issues; the ones that mattered:
 **Lesson.** Reviews of changes miss what lives between them. Every part of the half-done and identity bugs looked
 right on its own.
 
+### The filter that could not be heard
+
+**What happened.** Asked for a bass whose filter opens with velocity on a hardware synth behind a Max for Live
+editor, an assistant set every parameter right; `get_parameters` and a hardware measurement agreed. The sound did not
+change. Blame went to the help texts, to the LFO shape and to the assistant's reading of them, all wrongly.
+
+**Why.** One parameter, which routes an oscillator through the filter, already stood at the value the assistant set.
+Live sends nothing to a device for a value equal to the one it shows, so the editor never sent it on, and the synth's
+working memory kept an older sound in which that oscillator bypassed the filter. Nudging the value away and back made
+the filter audible at once.
+
+**Fix.** None in Live MCP. For Live's own devices the parameter value is the state, so nothing can drift. The gap is
+between an editor and the hardware it drives, and the place to say so is the editor's own description, which the
+assistant reads first: ask the user to push the patch before shaping a sound.
+
+**Lesson.** A parameter's value is the truth only when the device is where the sound is made.
+
+### A small model, a large device and a word that was only in the help texts
+
+**What happened.** The server was tried with a small, cheap model to see what it would stumble on. It managed every
+task, including the hardware editor, but two things cost it: a device with more than two hundred parameters answered
+`list_parameters` with 40 kB, and a search for "velocity" found nothing, because Live's parameter names are short
+("Vel") and the word stood only in the author's help texts.
+
+**Fix.** A device with more than 64 parameters answers with compact rows unless asked otherwise, `find_parameters`
+and `query` search the help texts too, and the descriptions say that Live's names are short.
+
+**Lesson.** A capable model papers over a bad answer; a small one shows where the answer is bad. Test with the
+smallest model you expect to be used.
+
+### The bridge said the device was loaded; the device was not ready
+
+**What happened.** `insert_device` loaded a large Max for Live device and the parameters set right after it were
+ignored. A second large device took ten seconds to appear at all after the bridge had answered that it was loaded.
+
+**Why.** Max for Live devices start their patch after Live has created the device, and this editor ignores the first
+value it receives per parameter after loading. Nothing in Live says when a patch is done.
+
+**Fix.** A convention for device authors: a parameter whose help text ends with `[ready]` starts at 0 and is set to
+its maximum by the patch when it is ready; `insert_device` waits for it, or for a settle time (`settleMs`) otherwise,
+and waits up to ten seconds for the device to appear in the first place. The convention is documented for other
+authors.
+
+**Lesson.** "Created" and "ready" are different moments for anything that runs its own program.
+
+### Recordings landed in the arrangement; the user lives in the Session View
+
+**What happened.** The checked arrangement recording above worked, and confused the user every time: the takes
+appeared in a view they never open, with the arrangement overridden by the session clips they do use. The assistant
+had chosen the arrangement because it gave a start on a known beat and because `measure_audio` could only read the
+arrangement.
+
+**Fix.** `record_clip` records into one empty session slot of an armed track: the bridge checks on Live's main thread
+that the track is armed (or is the selected MIDI track Live arms by itself), that the slot is empty and that no
+arrangement recording is running, then fires the slot with a record length (`ClipSlot.fire(record_length)`), four
+bars unless asked. Live stops the recording itself and the clip plays on; a stop afterwards answers with the clip.
+
+Two things turned up in Live. The recorded clip loops from then on, as any session clip does, so a test that is not
+stopped keeps sounding. And a stop before the launch quantization answered with the clip's length as it stood at
+that moment, 4 beats with a loop end of 63,072,000, which is Live's placeholder while a recording runs; the final clip
+was 16 beats. The report now says `stillRecording` until Live has ended the recording.
+
+**Lesson.** Build for the view the user works in, and read the result after the host has finished, not when the
+command returns.
+
+### Only the arrangement could be measured
+
+**What happened.** With recordings in the session, `measure_audio` had nothing to measure: the Extensions API renders
+a range of a track's arrangement, and nothing else.
+
+**Fix.** A session or arrangement audio clip can be measured from its own file, cut at its markers: seconds for an
+unwarped clip, beats mapped through the warp markers for a warped one. The same change added peak and RMS per window,
+onsets after silence and the dominant frequency of each window, which a bass line recorded through the new
+`record_clip` showed as its eight notes with their fundamentals.
+
+One more thing came with it: after the server had gained arguments, the running clients kept sending the old ones.
+An MCP client reads the tool list once, when it connects, and a stateless server has no stream on which to announce
+a change (`listChanged: false`). Until the client reconnects it fills in a form that no longer exists.
+
+**Lesson.** When the host's API draws a line, measure what is on the other side of it from the file.
+
+### Restarting the host while Live loaded a device crashed Live
+
+**What happened.** A development loop that rebuilt and restarted the extension host on every saved file restarted it
+while Live was loading a Max for Live device through the bridge. Live crashed.
+
+**Why.** The bridge's request was still running on Live's main thread when the process it was answering went away.
+
+**Fix.** Before a restart, the loop pings the bridge and waits while it is busy. The rule for a human is the same:
+never rebuild while a device is loading.
+
+**Lesson.** A host that runs your code inside itself is not isolated from your restarts.
+
 ## And when it works
 
 Not every surprise was a bug. Asked for a bass whose low-pass filter opens with how hard each note is played, an
@@ -218,6 +311,11 @@ the cutoff after all.
 It could do that because the tools had given it a true picture: every parameter with its range, choices and the
 device author's help text, and plain answers about what Live MCP itself cannot do. The limits it worked around were
 the instrument's, which is the musician's job, and the assistant did it well.
+
+Later the same evening, the two newest tools met for the first time: an assistant recorded a bass line into a session
+slot with `record_clip` and read it back with `measure_audio` on the clip. The answer had an onset every half second
+and the fundamentals of the notes to a tenth of a hertz, which is the first time the assistant could say what a
+hardware synth had actually played rather than what it had been told to play.
 
 ## Lessons
 
