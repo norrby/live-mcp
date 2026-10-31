@@ -505,13 +505,16 @@ export function createServer(deps: ServerDeps): McpServer {
     },
     guarded(async ({ track, tracks }) => {
       const all = [...new Set(unique(listOf(track, tracks, "track")).map((a) => live.track(a)))];
+      if (all.includes(live.song.mainTrack)) throw new LiveError("Nothing was deleted: the main track cannot be deleted");
       // A track inside a group that is deleted too goes with the group.
       const ids = new Set(all.map((t) => live.id(t)));
       const found = all.filter((t) => !live.groupAncestors(t).some((g) => ids.has(live.id(g))));
       const remaining = live.song.tracks.filter((t) => !found.includes(t) && !live.groupAncestors(t).some((g) => found.includes(g)));
       if (found.some((t) => live.song.tracks.includes(t)) && remaining.length === 0) throw new LiveError("Nothing was deleted: a set keeps at least one track");
       const deleted = found.map((t) => t.name);
-      await inOneStep(lastFirst(found, (t) => live.song.tracks.indexOf(t)).map((t) => () => live.song.deleteTrack(t)));
+      // Return tracks have places of their own, after every regular track.
+      const position = (t: (typeof found)[number]) => (live.song.tracks.includes(t) ? live.song.tracks.indexOf(t) : 100_000 + live.song.returnTracks.indexOf(t));
+      await inOneStep(lastFirst(found, position).map((t) => () => live.song.deleteTrack(t)));
       return { deleted: deleted.length === 1 ? deleted[0] : deleted };
     }),
   );

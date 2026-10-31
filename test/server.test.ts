@@ -417,3 +417,19 @@ test("several tracks, devices or arrangement clips in a row are deleted as asked
   assert.deepEqual((await call(c, "get_clips", { track: `t${b}` })).data.arrangement.map((x: { name: string }) => x.name), ["Z"]);
   await c.close();
 });
+
+test("a device given twice, by position and by id, is deleted once and its neighbour stays; the main track is refused", async () => {
+  const c = await client();
+  const id = (await call(c, "create_track", { kind: "midi", name: "Twice" })).data.id;
+  const devices = [];
+  for (const name of ["Reverb", "Utility", "Operator"]) devices.push((await call(c, "insert_device", { into: id, device: name })).data.id);
+  const t = (await call(c, "get_set")).data.tracks.findIndex((x: { name: string }) => x.name === "Twice");
+  assert.equal((await call(c, "delete_device", { devices: [`t${t}/d0`, devices[0]] })).data.deleted, "Reverb");
+  assert.deepEqual((await call(c, "get_set")).data.tracks[t].devices.map((d: { name: string }) => d.name), ["Utility", "Operator"]);
+
+  const refused = await call(c, "delete_track", { tracks: [id, "main"] });
+  assert.ok(!refused.ok);
+  assert.match(refused.data, /Nothing was deleted: the main track/);
+  assert.ok((await call(c, "get_set")).data.tracks.some((x: { name: string }) => x.name === "Twice"), "nothing was deleted");
+  await c.close();
+});
