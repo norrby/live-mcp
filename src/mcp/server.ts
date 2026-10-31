@@ -159,7 +159,7 @@ export function createServer(deps: ServerDeps): McpServer {
     return { added, replaced, ...(warnings.length ? { warnings } : {}) };
   };
   /** The clip a record_clip left in its slot, if the stop concerned that track (or any track); reported once. */
-  const sessionTakeReport = (trackIndex?: number) => {
+  const sessionTakeReport = async (trackIndex?: number) => {
     const take = sessionTakes.get(live);
     if (!take) return undefined;
     const i = live.song.tracks.findIndex((t) => live.id(t) === take.track);
@@ -170,7 +170,13 @@ export function createServer(deps: ServerDeps): McpServer {
     if (trackIndex !== undefined && trackIndex !== i) return undefined;
     sessionTakes.delete(live);
     const c = live.song.tracks[i].clipSlots[take.slot]?.clip;
-    return c ? live.clipInfo(c, `t${i}/s${take.slot}`) : { warning: `slot t${i}/s${take.slot} got no clip` };
+    if (!c) return { warning: `slot t${i}/s${take.slot} got no clip` };
+    const info = live.clipInfo(c, `t${i}/s${take.slot}`);
+    // A stop takes effect at the next launch quantization; until then the clip's length is not final.
+    const rows = await bridge.call<{ index: number; is_recording: boolean }[]>("clips", [i]).catch(() => []);
+    if (rows.find((r) => r.index === take.slot)?.is_recording)
+      return { address: info.address, id: info.id, name: info.name, stillRecording: true, note: "Live ends the recording at the next launch quantization; get_clips shows the clip's final length" };
+    return info;
   };
   const annotateDevice = (d: { address: string; kind: string; chains?: { devices: { address: string; kind: string }[] }[]; m4l?: string }) => {
     const m = m4lFor(d.address);
@@ -623,7 +629,7 @@ export function createServer(deps: ServerDeps): McpServer {
         if (start !== undefined && action !== "play") throw new LiveError("start goes with action play or record only");
         const status = await bridge.call<Record<string, unknown>>("transport", [], action ? { action, ...(start !== undefined ? { start } : {}) } : {});
         if (sessionTakes.has(live) && (action === "stop" || action === "stop_all_clips")) {
-          const recorded = sessionTakeReport();
+          const recorded = await sessionTakeReport();
           if (recorded) return { ...status, recorded };
         }
         if (!takes.has(live)) return status;
@@ -1104,7 +1110,7 @@ export function createServer(deps: ServerDeps): McpServer {
       if (scene !== undefined) kwargs.scene = scene;
       const fired = await bridge.call<Record<string, unknown>>("fire", [], kwargs);
       if (!track || !sessionTakes.has(live)) return fired;
-      const recorded = sessionTakeReport(kwargs.track as number);
+      const recorded = await sessionTakeReport(kwargs.track as number);
       return recorded ? { ...fired, recorded } : fired;
     }),
   );

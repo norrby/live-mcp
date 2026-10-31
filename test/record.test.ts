@@ -15,6 +15,7 @@ import { smallSet } from "./fake-host.js";
 
 test("record names its tracks to the bridge, and stop reports what the take added", async (t) => {
   const asked: { cmd: string; args: unknown[]; kwargs: Record<string, unknown> }[] = [];
+  let stillRecording = false;
   const fakeRemote = net.createServer((sock) => {
     sock.once("data", (line) => {
       const call = JSON.parse(String(line));
@@ -24,6 +25,7 @@ test("record names its tracks to the bridge, and stop reports what the take adde
         : call.cmd === "record" ? { recording: ["1-MIDI"], start: call.kwargs.start, warnings: [] }
         : call.cmd === "record_clip" ? { track: "2-Audio", slot: call.args[1], length: call.kwargs.until_stopped ? null : call.kwargs.length ?? 16, quantization: "q_bar" }
         : call.cmd === "fire" ? { fired: "stop", track: "2-Audio" }
+        : call.cmd === "clips" ? [{ index: 0, is_recording: stillRecording }]
         : { is_playing: false, record_mode: false };
       sock.end(JSON.stringify({ ok: true, result }) + "\n");
     });
@@ -98,7 +100,17 @@ test("record names its tracks to the bridge, and stop reports what the take adde
   const halted = (await call("fire", { track: "t1" })).data;
   assert.equal(halted.recorded.address, "t1/s0");
   assert.equal(halted.recorded.name, "2-Audio 1");
+  assert.equal(halted.recorded.length, 8);
   assert.equal((await call("fire", { track: "t1" })).data.recorded, undefined, "the clip is reported once");
+  // Stopped before the launch quantization: Live is still recording, so the length is not reported as final.
+  await call("delete_clip", { clip: "t1/s0" });
+  await call("record_clip", { track: "t1", slot: 0, untilStopped: true });
+  fake.addClip(fake.tracks()[1], 0, "2-Audio 2", 4);
+  stillRecording = true;
+  const early = (await call("fire", { track: "t1" })).data;
+  assert.equal(early.recorded.stillRecording, true);
+  assert.equal(early.recorded.length, undefined);
+  stillRecording = false;
   const open = await call("record_clip", { track: "t1", slot: 1, untilStopped: true });
   assert.ok(open.ok, JSON.stringify(open.data));
   assert.match(open.data.note, /until fire/);
