@@ -134,6 +134,10 @@ def midi_read(path):
 
 
 class LiveRemote(ControlSurface):
+    # Also on the class: an instance started by an older version and then reloaded never ran this __init__, so
+    # without it the first request after a reload stopped the main-thread loop for good.
+    _lock = threading.Lock()
+
     def __init__(self, c_instance):
         super().__init__(c_instance)
         self._queue = queue.Queue()
