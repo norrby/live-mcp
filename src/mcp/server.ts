@@ -271,16 +271,17 @@ export function createServer(deps: ServerDeps): McpServer {
     "list_parameters",
     {
       description:
-        "All parameters of a device: address, name, range, choices, current value. For recognised Max for Live devices also the long name, unit and help text, the device's own description (m4l.about: read it first, it is the author's word on how to drive the device), and the controls Live does not expose with the parameters that reach the same thing (m4l.notInLive). With display=true (needs the bridge) also the value as Live shows it, e.g. \"-12.0 dB\". Max for Live short names may repeat: address by index. A large device answers with a lot of text: narrow it with query, or leave out the help texts with help=false.",
+        "All parameters of a device: address, name, range, choices, current value. For recognised Max for Live devices also the long name, unit and help text, the device's own description (m4l.about: read it first, it is the author's word on how to drive the device), and the controls Live does not expose with the parameters that reach the same thing (m4l.notInLive). With display=true (needs the bridge) also the value as Live shows it, e.g. \"-12.0 dB\". Max for Live short names may repeat: address by index. A large device answers with a lot of text: narrow it with query, leave out the help texts with help=false, or ask for compact rows (address, name, long name, value, min, max) with compact=true.",
       inputSchema: {
         device: address,
         values: z.boolean().default(true).describe("Include current values"),
         display: z.boolean().default(false).describe("Include Live's display strings via the bridge (built-in device units)"),
         query: z.string().optional().describe("Only parameters whose name or long name contains this (case-insensitive)"),
         help: z.boolean().default(true).describe("Include the help texts of Max for Live parameters"),
+        compact: z.boolean().default(false).describe("Rows with address, name, long name, value, min and max only, and no device description; askFirst still shows"),
       },
     },
-    guarded(async ({ device, values, display, query, help }) => {
+    guarded(async ({ device, values, display, query, help, compact }) => {
       const d = live.device(device);
       const infos = live.deviceParameters(device);
       if (values) {
@@ -288,7 +289,11 @@ export function createServer(deps: ServerDeps): McpServer {
         infos.forEach((p, i) => (p.value = vals[i]));
       }
       const m4l = m4lFor(device);
-      const rows = infos.map((p, i) => compactParam(p, m4l?.parameters[i], help));
+      const rows = infos.map((p, i) => compactParam(p, m4l?.parameters[i], help && !compact));
+      if (compact) for (const r of rows) {
+        delete r.items;
+        delete r.unit;
+      }
       if (display) {
         const strs = await bridge.call<{ index: number; str: string }[]>("param_strs", bridgeDeviceArgs(live, device));
         for (const s of strs) if (rows[s.index]) rows[s.index].display = s.str;
@@ -302,9 +307,9 @@ export function createServer(deps: ServerDeps): McpServer {
         out.m4l = stripUndefined({
           file: m4l.file,
           frozen: m4l.frozen,
-          about: m4l.description,
+          about: compact ? undefined : m4l.description,
           askFirst: askFirst.length ? { parameters: askFirst, rule: "change these only when the user asks for it; set_parameters refuses them otherwise" } : undefined,
-          notInLive: hidden.length ? hidden : undefined,
+          notInLive: hidden.length && !compact ? hidden : undefined,
         });
       }
       out.parameters = q ? rows.filter((r) => matches(r.name) || matches(r.longName)) : rows;
