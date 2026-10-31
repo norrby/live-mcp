@@ -508,6 +508,9 @@ class LiveRemote(ControlSurface):
         song = self.song()
         if song.record_mode:
             raise ValueError("Not started: Live is already recording. Stop first.")
+        if song.is_playing:
+            # Recording would begin where play is now, before it could jump to the start, over clips no warning names.
+            raise ValueError("Not started, nothing changed: Live is playing. Stop first (transport stop), then record.")
         wanted = sorted(set(int(i) for i in tracks))
         for i in wanted:
             if i < 0 or i >= len(song.tracks) or not song.tracks[i].can_be_armed:

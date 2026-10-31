@@ -508,11 +508,11 @@ export function createServer(deps: ServerDeps): McpServer {
     "transport",
     {
       description: "Transport status (playing, recording, tempo, position, loop, metronome, would_record: the tracks Live records on now) and actions: play, stop, continue, stop_all_clips, record, record_off, metronome_on/off, loop_on/off, back_to_arrangement. Live applies play/stop a moment later: call again without an action to confirm. Once a session clip has been fired on a track, that track ignores its arrangement clips until Back to Arrangement (arrangement_overridden is then true): to hear the arrangement, stop_all_clips or back_to_arrangement, then play.\n" +
-        "record records into the arrangement: give tracks (the ones to record on; arm them first with set_track) and optionally start (beats). In one step Live MCP checks that exactly those tracks would record, moves the playhead to start and plays with the record button on; if any other track would record (Live also records on the selected MIDI track while no MIDI track is armed), nothing happens and the answer says why. stop or record_off afterwards answers with what the take added and replaced." + viaBridge,
+        "record records into the arrangement: give tracks (the ones to record on; arm them first with set_track) and optionally start (beats). In one step Live MCP checks that exactly those tracks would record, puts Live's start marker at start and plays from it with the record button on; Live must be stopped first. If any other track would record (Live also records on the selected MIDI track while no MIDI track is armed), nothing happens and the answer says why. stop or record_off afterwards answers with what the take added and replaced." + viaBridge,
       inputSchema: {
         action: z.enum(["play", "stop", "continue", "stop_all_clips", "record", "record_off", "metronome_on", "metronome_off", "loop_on", "loop_off", "back_to_arrangement"]).optional(),
         tracks: z.array(address).optional().describe("record only: the tracks to record on, all of them; required with record"),
-        start: z.number().min(0).optional().describe("record only: where the take starts, in beats; default the current position"),
+        start: z.number().min(0).optional().describe("record only: where the take starts, in beats; default Live's start marker, where play would start now"),
       },
     },
     guarded(async ({ action, tracks, start }) => {
