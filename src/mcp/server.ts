@@ -473,12 +473,15 @@ export function createServer(deps: ServerDeps): McpServer {
       inputSchema: { device: address.optional(), devices: z.array(address).optional() },
     },
     guarded(async ({ device, devices }) => {
-      const all = unique(listOf(device, devices, "device")).map((a) => live.locateDevice(a));
+      // The same device can come under two addresses (t0/d0 and its #id); it is deleted once.
+      const all = [...new Map(unique(listOf(device, devices, "device")).map((a) => live.locateDevice(a)).map((f) => [live.id(f.device), f] as const)).values()];
       // A device inside a rack that is deleted too goes with the rack; deleting it as well would fail half way.
       const ids = new Set(all.map((f) => live.id(f.device)));
       const found = all.filter((f) => !live.deviceAncestors(f.device).some((d) => ids.has(live.id(d))));
       const deleted = found.map((f) => f.device.name);
-      await inOneStep(lastFirst(found, (f) => f.index).map((f) => () => f.holder.deleteDevice(f.device)));
+      // Deepest first, so no delete moves the rack another one is inside; then last first within each chain.
+      const depth = (f: (typeof found)[number]) => live.deviceAncestors(f.device).length;
+      await inOneStep(lastFirst(found, (f) => depth(f) * 100_000 + f.index).map((f) => () => f.holder.deleteDevice(f.device)));
       return { deleted: deleted.length === 1 ? deleted[0] : deleted };
     }),
   );
