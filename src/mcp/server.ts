@@ -271,19 +271,21 @@ export function createServer(deps: ServerDeps): McpServer {
     "list_parameters",
     {
       description:
-        "All parameters of a device: address, name, range, choices, current value. For recognised Max for Live devices also the long name, unit and help text, the device's own description (m4l.about: read it first, it is the author's word on how to drive the device), and the controls Live does not expose with the parameters that reach the same thing (m4l.notInLive). With display=true (needs the bridge) also the value as Live shows it, e.g. \"-12.0 dB\". Max for Live short names may repeat: address by index. A large device answers with a lot of text: narrow it with query, leave out the help texts with help=false, or ask for compact rows (address, name, long name, value, min, max) with compact=true.",
+        "All parameters of a device: address, name, range, choices, current value. For recognised Max for Live devices also the long name, unit and help text, the device's own description (m4l.about: read it first, it is the author's word on how to drive the device), and the controls Live does not expose with the parameters that reach the same thing (m4l.notInLive). With display=true (needs the bridge) also the value as Live shows it, e.g. \"-12.0 dB\". Max for Live short names may repeat: address by index. A device with more than 64 parameters answers with compact rows (address, name, long name, value, min, max) unless asked with query or compact=false; query finds parameters by name or help text, and help=false leaves the help texts out. The device's description (m4l.about) comes without query; with query, or compact=true, it is left out.",
       inputSchema: {
         device: address,
         values: z.boolean().default(true).describe("Include current values"),
         display: z.boolean().default(false).describe("Include Live's display strings via the bridge (built-in device units)"),
-        query: z.string().optional().describe("Only parameters whose name or long name contains this (case-insensitive)"),
+        query: z.string().optional().describe("Only parameters whose name, long name or help text contains this (case-insensitive)"),
         help: z.boolean().default(true).describe("Include the help texts of Max for Live parameters"),
-        compact: z.boolean().default(false).describe("Rows with address, name, long name, value, min and max only, and no device description; askFirst still shows"),
+        compact: z.boolean().optional().describe("Rows with address, name, long name, value, min and max only; askFirst still shows; true also leaves out the device description. Default: true for a device with more than 64 parameters and no query"),
       },
     },
-    guarded(async ({ device, values, display, query, help, compact }) => {
+    guarded(async ({ device, values, display, query, help, compact: asked }) => {
       const d = live.device(device);
       const infos = live.deviceParameters(device);
+      // A small model cannot afford a large device whole; it gets the outline and is told how to ask for more.
+      const compact = asked ?? (!query && infos.length > 64);
       if (values) {
         const vals = await live.readValues(d.parameters);
         infos.forEach((p, i) => (p.value = vals[i]));
@@ -307,12 +309,15 @@ export function createServer(deps: ServerDeps): McpServer {
         out.m4l = stripUndefined({
           file: m4l.file,
           frozen: m4l.frozen,
-          about: compact ? undefined : m4l.description,
+          // The author's instructions come with the first look, even a compact one, but not with every narrowed one.
+          about: asked === true || q ? undefined : m4l.description,
           askFirst: askFirst.length ? { parameters: askFirst, rule: "change these only when the user asks for it; set_parameters refuses them otherwise" } : undefined,
           notInLive: hidden.length && !compact ? hidden : undefined,
         });
       }
-      out.parameters = q ? rows.filter((r) => matches(r.name) || matches(r.longName)) : rows;
+      out.parameters = q ? rows.filter((r, i) => matches(r.name) || matches(r.longName) || matches(m4l?.parameters[i]?.help)) : rows;
+      if (compact && asked === undefined)
+        out.note = `${rows.length} parameters, so compact rows; list_parameters with query (a name or a word from the help texts) gives choices and help for some, compact=false for all`;
       return out;
     }),
   );
@@ -320,7 +325,7 @@ export function createServer(deps: ServerDeps): McpServer {
   server.registerTool(
     "find_parameters",
     {
-      description: "Find parameters by name across the set (case-insensitive substring of the short name, or of the long name for recognised Max for Live devices). Live's names are short (Vel, Freq, Res, Env, Amt): search a short stem such as \"vel\", not \"velocity\". Returns addresses to use with get_parameters/set_parameters, with range, choices and, for Max for Live devices, the help text.",
+      description: "Find parameters by name across the set (case-insensitive substring of the short name, or of the long name or help text for recognised Max for Live devices). Live's names are short (Vel, Freq, Res, Env, Amt): search a short stem such as \"vel\", not \"velocity\". Returns addresses to use with get_parameters/set_parameters, with range, choices and, for Max for Live devices, the help text.",
       inputSchema: { query: z.string().min(1), device: address.optional().describe("Limit to one device") },
     },
     guarded(({ query, device }) => {
@@ -332,7 +337,8 @@ export function createServer(deps: ServerDeps): McpServer {
         const infos = live.deviceParameters(deviceAddress);
         infos.forEach((p, i) => {
           const long = m4l?.parameters[i]?.longName;
-          if (p.name.toLowerCase().includes(q) || long?.toLowerCase().includes(q)) hits.push({ ...compactParam(p, m4l?.parameters[i]), device: d.name });
+          const help = m4l?.parameters[i]?.help;
+          if (p.name.toLowerCase().includes(q) || long?.toLowerCase().includes(q) || help?.toLowerCase().includes(q)) hits.push({ ...compactParam(p, m4l?.parameters[i]), device: d.name });
         });
       };
       const walk = (devices: { address: string; chains?: { devices: { address: string }[] }[] }[]) => {

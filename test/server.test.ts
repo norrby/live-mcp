@@ -309,6 +309,9 @@ test("a parameter its author marked [ask first] is refused unless the user asked
   assert.equal(list.parameters[1].help, "Presses Pull, Push or Store.", "the tag is not shown as part of the help");
   assert.equal(list.parameters[1].askFirst, true);
   assert.deepEqual(list.m4l.askFirst.parameters, ["r0/d0/p1 Action"]);
+  const byHelp = (await call(c, "list_parameters", { device: "r0/d0", query: "store" })).data;
+  assert.deepEqual(byHelp.parameters.map((r: { address: string }) => r.address), ["r0/d0/p1"], "a word from the help text finds the parameter");
+  assert.deepEqual((await call(c, "find_parameters", { query: "store" })).data.hits.map((h: { address: string }) => h.address), ["r0/d0/p1"]);
 
   const refused = await call(c, "set_parameters", { changes: [{ address: "r0/d0/p2", value: 50 }, { address: "r0/d0/p1", value: 2 }] });
   assert.equal(refused.ok, false);
