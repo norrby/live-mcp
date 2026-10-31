@@ -149,9 +149,22 @@ MIDI track, replacing the clip that was meant to play. Two smaller causes: Monit
 clips, and play starts at the start marker, wherever the user last clicked, not at the position `transport` had
 reported.
 
-**Status.** Open. The plan: report Live's implicit arm next to `arm`, let `transport record_on` say which tracks will
-actually record and refuse when that would overwrite something, and let it select the track to record in the same call
-so that no click can land in between.
+**Fix.** We first planned to report more and let `record_on` warn. A review pointed out that a warning still leaves
+a gap: record, play and the user's click are separate moments. So `transport` got a `record` action that takes the
+tracks to record on. In one step on Live's main thread, the bridge checks that exactly those tracks would record
+(arm or implicit arm), puts the start marker at the requested beat, and plays with the record button on. If any other
+track would record, nothing starts and the answer names the track and says to ask the user, not to change their
+selection. `stop` afterwards answers with the clips the take added and replaced. `get_set` shows Live's implicit arm
+next to `arm`.
+
+Two things turned up while testing it in Live. Setting the play position while stopped does not move where play
+starts: Live plays from its start marker, a separate value (`Song.start_time`), so that is what the take now sets.
+And the first version kept the take's starting state inside the MCP server object, which the HTTP transport makes
+anew for every request, so `stop` could never see it. The test had used one server for every call; now it uses a
+new one per call, as HTTP does.
+
+**Lesson.** When the tool cannot see everything the user can change, let the caller say what it intends and check
+it at the moment of acting, rather than checking first and acting later.
 
 ### Deleting two tracks deleted a neighbour
 
