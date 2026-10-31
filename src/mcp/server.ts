@@ -483,17 +483,26 @@ export function createServer(deps: ServerDeps): McpServer {
   server.registerTool(
     "load_browser_item",
     {
-      description: "Load any loadable browser item onto a track by name: a saved preset (\"My Synth.adv\" keeps everything it was saved with, including an External Instrument's MIDI To / Audio From), a Max for Live device (\"My Device.amxd\"), a plug-in or a built-in device. Live places it after the track's selected device, or last, and selects the track while doing so. The first match across the browser roots wins; use browse to see what exists. A MIDI file (.mid) does not load this way: use import_midi_file. Answers once the new device is ready to be driven (ready, readyAfterMs: its parameters exist and have held still, at least a second after loading; ready false after 15 s)." + viaBridge,
-      inputSchema: { track: address, item: z.string().describe("Name as the browser shows it, with or without extension") },
+      description: "Load any loadable browser item onto a track by name: a saved preset (\"My Synth.adv\" keeps everything it was saved with, including an External Instrument's MIDI To / Audio From), a Max for Live device (\"My Device.amxd\"), a plug-in or a built-in device. Live places it after the track's selected device, or last, and selects the track while doing so. The first match across the browser roots wins; use browse to see what exists. A MIDI file (.mid) does not load this way: use import_midi_file. Answers once the new device is ready to be driven (ready, readyAfterMs: its parameters exist and have held still, at least a second after loading, plus settleMs for a Max for Live device, whose own patch may still be setting itself up while its parameters look still; ready false after 15 s)." + viaBridge,
+      inputSchema: {
+        track: address,
+        item: z.string().describe("Name as the browser shows it, with or without extension"),
+        settleMs: z.number().int().min(0).max(30_000).optional().describe("Max for Live devices: time to wait after the parameters hold still; default 3000. Built-in devices: default 0"),
+      },
     },
-    guarded(async ({ track, item }) => {
+    guarded(async ({ track, item, settleMs }) => {
       const holder = live.track(track);
       const before = holder.devices.map((d) => live.id(d));
       const loaded = await bridge.call<{ from: string; item: string; devices_after: string[] }>("add_device", [bridgeTrackIndex(live, track), item]);
       const added = holder.devices.findIndex((d) => !before.includes(live.id(d)));
       if (added < 0) return { loaded: loaded.item, from: loaded.from, note: "Live reported no new device on the track; it may have replaced the selected device or loaded a preset into it." };
-      const { ready, ms } = await settled(holder.devices[added]);
-      return { loaded: loaded.item, from: loaded.from, ready, readyAfterMs: ms, device: live.deviceInfo(holder.devices[added], `${track}/d${added}`) };
+      const device = holder.devices[added];
+      const { ready, ms } = await settled(device);
+      // Live sends a Max for Live device its stored values for a while after its parameters look still; a value set
+      // before those arrive can be overwritten by them.
+      const settle = settleMs ?? (/\.amxd$/i.test(item) || m4lFor(live.id(device)) ? 3000 : 0);
+      if (ready && settle) await new Promise((r) => setTimeout(r, settle));
+      return { loaded: loaded.item, from: loaded.from, ready, readyAfterMs: ready ? ms + settle : ms, device: live.deviceInfo(holder.devices[added], `${track}/d${added}`) };
     }),
   );
 
