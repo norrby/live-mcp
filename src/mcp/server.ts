@@ -613,7 +613,9 @@ export function createServer(deps: ServerDeps): McpServer {
         const settle = settleMs ?? (/\.amxd$/i.test(item) || m4l ? 3000 : 0);
         if (settle) await new Promise((r) => setTimeout(r, settle));
       }
-      return { loaded: loaded.item, from: loaded.from, ready: waited, readyAfterMs: Date.now() - t0, ...(signal >= 0 ? { readyBy: "the device's [ready] parameter" } : {}), device: live.deviceInfo(holder.devices[added], `${track}/d${added}`) };
+      const info = live.deviceInfo(holder.devices[added], `${track}/d${added}`);
+      annotateDevice(info);
+      return { loaded: loaded.item, from: loaded.from, ready: waited, readyAfterMs: Date.now() - t0, ...(signal >= 0 ? { readyBy: "the device's [ready] parameter" } : {}), device: info };
     }),
   );
 
