@@ -17,6 +17,7 @@ Building Live MCP yourself, configuring it, and the full list of tools. How it w
 npm install
 npm run build:dev   # bundles src/ into dist/extension.js with a source map
 npm run host        # runs the extension in Live's Extension Host; Live must be open
+npm run dev         # the same, and builds and restarts it on every saved change; reloads LiveRemote too
 npm test            # runs without Live, against a fake Extension Host
 npm run package     # minified build, then release/Live-MCP-<version>.ablx
 ```
@@ -26,6 +27,15 @@ application. Developer Mode makes Live leave the Extension Host to you, so with 
 extensions at all; turn it off to try an installed `.ablx`, and uninstall that again before `npm run host`, or the
 two compete for the port. It runs the extension from this folder, so after a change you rebuild and restart the host, not Live.
 The first start after the host was stopped can take half a minute; wait for `MCP listening` in its output.
+
+`npm run dev` does that for you. It watches `src/`, and after a save builds and restarts the host; a build that
+fails leaves the last good one running. A saved `remote/LiveRemote/LiveRemote.py` is checked, copied into the
+User Library's `Remote Scripts/LiveRemote` (or `LIVEREMOTE_DIR`) and reloaded in Live, without restarting Live. A
+restart waits while LiveRemote does not answer, since restarting the host while Live loads a device has crashed
+Live. The build skips the type check; `npm run build:dev` or `npx tsc --noEmit` runs it.
+
+The installed extension runs in a sandbox that the development host does not have, so try the packaged `.ablx`
+with Developer Mode off before a release.
 
 `tools/client.mjs` talks to the running server as an MCP client does:
 

@@ -14,6 +14,7 @@
     "build:dev": "tsc --noEmit && tsx build.mts",
     "test": "node --import tsx --test test/*.test.ts",
     "host": "node tools/host.mjs",
+    "dev": "node tools/dev.mjs",
     "package": "npm run build && ableton-extensions-cli package && mkdir -p release && mv -f Live-MCP-*.ablx release/ && npm run package:bridge",
     "package:bridge": "rm -f release/LiveRemote.zip && cd remote && zip -qr ../release/LiveRemote.zip LiveRemote -x '*/__pycache__/*' '*/.*'"
   },
