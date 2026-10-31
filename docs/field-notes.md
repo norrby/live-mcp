@@ -183,6 +183,18 @@ tracks, devices and clips.
 **Lesson.** "One undo step" and "one at a time" pull in different directions; find out what the host does between
 the two.
 
+## And when it works
+
+Not every surprise was a bug. Asked for a bass whose low-pass filter opens with how hard each note is played, an
+assistant found that the hardware synth behind a Max for Live editor has no velocity-to-cutoff routing. It did not
+stop there, and it did not reach around Live MCP either: it set an LFO to a flat shape, so that it gives a steady
+value rather than a wave, let velocity set that value, and routed the LFO to the filter cutoff. Velocity then moved
+the cutoff after all.
+
+It could do that because the tools had given it a true picture: every parameter with its range, choices and the
+device author's help text, and plain answers about what Live MCP itself cannot do. The limits it worked around were
+the instrument's, which is the musician's job, and the assistant did it well.
+
 ## Lessons
 
 - **The assistant only knows what the answers say.** Anything Live shows only in its window (a pink arm button, a red
