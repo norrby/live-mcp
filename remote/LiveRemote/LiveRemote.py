@@ -761,11 +761,23 @@ class LiveRemote(ControlSurface):
 
     @staticmethod
     def _shown_number(text):
-        """The number in a displayed value such as "-12 dB", "440 Hz", "50 %" or "1/16"; ValueError when there is none."""
-        m = re.search(r"-?inf|[-+]?\d+(?:[.,]\d+)?", str(text))
+        """The number in a displayed value such as "-12 dB", "440 Hz", "2.5 kHz", "120 ms", "50 %", "1/16" or "50L", in
+        one unit per kind so that values shown in different units compare: kHz as Hz, s as ms, pan left negative and
+        "C" as 0. ValueError when there is no number."""
+        text = str(text).strip()
+        if text.upper() == "C":
+            return 0.0
+        m = re.search(r"(-?inf|[-+]?\d+(?:[.,]\d+)?)\s*([A-Za-z]*)", text)
         if not m:
             raise ValueError("no number in the displayed value %r" % text)
-        return float(m.group(0).replace(",", "."))
+        n, unit = float(m.group(1).replace(",", ".")), m.group(2)
+        if unit in ("k", "kHz"):
+            return n * 1000.0
+        if unit == "s":
+            return n * 1000.0
+        if unit == "L":
+            return -n
+        return n
 
     def cmd_param_set_display(self, track, device, param, target):
         """Set a parameter by its displayed value: quantized ones by item name (exact, then case-insensitive, then by the
