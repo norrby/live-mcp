@@ -198,3 +198,143 @@ export function measure(audio: Audio, slices = 32): Measurement {
     envelopeDbfs: envelope,
   };
 }
+
+// ---- Time-resolved measurements: equal windows over the range, onsets, and the dominant frequency of a window.
+
+export interface Windows {
+  windowMs: number;
+  /** what each row holds, in order */
+  columns: string[];
+  /** one row per window: seconds from the start, peak and RMS over all channels in dBFS, and the dominant frequency in Hz when asked (null when the window is silent) */
+  rows: (number | null)[][];
+}
+
+/** The most windows one answer may hold; wider windows or a shorter range above that. */
+const MAX_WINDOWS = 1000;
+
+const SILENT_DBFS = -80;
+
+/** All channels of a span of frames mixed to one, as the frequency measurement wants it. */
+function mono(audio: Audio, from: number, to: number): Float64Array {
+  const out = new Float64Array(Math.max(0, to - from));
+  for (const c of audio.channels) for (let i = from; i < to; i++) out[i - from] += c[i] / audio.channels.length;
+  return out;
+}
+
+function peakAndRms(audio: Audio, from: number, to: number): { peak: number; rms: number } {
+  let p = 0, s = 0, count = 0;
+  for (const c of audio.channels)
+    for (let i = from; i < to; i++) {
+      const v = Math.abs(c[i]);
+      if (v > p) p = v;
+      s += v * v;
+      count++;
+    }
+  return { peak: p, rms: Math.sqrt(s / Math.max(1, count)) };
+}
+
+/** Peak and RMS per window of `windowMs`, and the dominant frequency per window inside `hz` when given. */
+export function windows(audio: Audio, windowMs: number, hz?: { min: number; max: number }): Windows {
+  const frames = audio.channels[0]?.length ?? 0;
+  const per = Math.max(1, Math.round((windowMs / 1000) * audio.sampleRate));
+  const count = Math.ceil(frames / per);
+  if (count > MAX_WINDOWS) throw new Error(`${count} windows of ${windowMs} ms; at most ${MAX_WINDOWS} fit in one answer, so ask for a wider window or a shorter range`);
+  const rows: (number | null)[][] = [];
+  for (let k = 0; k < count; k++) {
+    const from = k * per, to = Math.min(frames, from + per);
+    const { peak, rms } = peakAndRms(audio, from, to);
+    const row: (number | null)[] = [Math.round((from / audio.sampleRate) * 1000) / 1000, round(db(peak)), round(db(rms))];
+    if (hz) row.push(db(rms) > SILENT_DBFS ? dominantHz(mono(audio, from, to), audio.sampleRate, hz.min, hz.max) : null);
+    rows.push(row);
+  }
+  return { windowMs, columns: ["seconds", "peakDbfs", "rmsDbfs", ...(hz ? ["hz"] : [])], rows };
+}
+
+/** Seconds at which the signal rises to `thresholdDbfs` RMS (measured over `windowMs`) after having been below it; the start counts as below. */
+export function onsets(audio: Audio, thresholdDbfs: number, windowMs = 10): number[] {
+  const frames = audio.channels[0]?.length ?? 0;
+  const per = Math.max(1, Math.round((windowMs / 1000) * audio.sampleRate));
+  const out: number[] = [];
+  let below = true;
+  for (let from = 0; from < frames; from += per) {
+    const above = db(peakAndRms(audio, from, Math.min(frames, from + per)).rms) >= thresholdDbfs;
+    if (above && below) out.push(Math.round((from / audio.sampleRate) * 1000) / 1000);
+    below = !above;
+  }
+  return out;
+}
+
+/** In-place iterative radix-2 FFT; the length is a power of two. */
+function fft(re: Float64Array, im: Float64Array): void {
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) {
+      [re[i], re[j]] = [re[j], re[i]];
+      [im[i], im[j]] = [im[j], im[i]];
+    }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const wr = Math.cos((-2 * Math.PI) / len), wi = Math.sin((-2 * Math.PI) / len);
+    for (let i = 0; i < n; i += len) {
+      let cr = 1, ci = 0;
+      for (let k = 0; k < len / 2; k++) {
+        const a = i + k, b = a + len / 2;
+        const tr = re[b] * cr - im[b] * ci, ti = re[b] * ci + im[b] * cr;
+        re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti;
+        const nr = cr * wr - ci * wi;
+        ci = cr * wi + ci * wr; cr = nr;
+      }
+    }
+  }
+}
+
+/** The power of `x` at one frequency (Goertzel), for refining a peak between FFT bins. */
+function goertzel(x: Float64Array, hz: number, rate: number): number {
+  const c = 2 * Math.cos((2 * Math.PI * hz) / rate);
+  let s1 = 0, s2 = 0;
+  for (let i = 0; i < x.length; i++) {
+    const s0 = x[i] + c * s1 - s2;
+    s2 = s1; s1 = s0;
+  }
+  return s1 * s1 + s2 * s2 - c * s1 * s2;
+}
+
+/**
+ * The strongest frequency of a mono signal between min and max Hz, in Hz to two decimals: a Hann window and an FFT
+ * find the bin, Goertzel refines it to a hundredth of a bin. null when nothing is there or the span is too short.
+ */
+export function dominantHz(x: Float64Array, rate: number, min: number, max: number): number | null {
+  const n = x.length;
+  if (n < 16) return null;
+  const windowed = new Float64Array(n);
+  for (let i = 0; i < n; i++) windowed[i] = x[i] * (0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (n - 1)));
+  let size = 16;
+  while (size < n) size *= 2;
+  const re = new Float64Array(size), im = new Float64Array(size);
+  re.set(windowed);
+  fft(re, im);
+  const bin = rate / size;
+  const lo = Math.max(1, Math.ceil(min / bin)), hi = Math.min(size / 2, Math.floor(max / bin));
+  let best = -1, power = 0;
+  for (let k = lo; k <= hi; k++) {
+    const p = re[k] * re[k] + im[k] * im[k];
+    if (p > power) (power = p), (best = k);
+  }
+  if (best < 0 || power === 0) return null;
+  // Two passes of Goertzel around the bin: 41 points one bin wide, then 21 points a twentieth of a bin wide.
+  let hz = best * bin;
+  for (const step of [bin / 20, bin / 400]) {
+    let top = -1, at = hz;
+    for (let i = -20; i <= 20; i++) {
+      const f = hz + i * step;
+      if (f < min || f > max || f <= 0 || f >= rate / 2) continue;
+      const p = goertzel(windowed, f, rate);
+      if (p > top) (top = p), (at = f);
+    }
+    hz = at;
+  }
+  return Math.round(hz * 100) / 100;
+}

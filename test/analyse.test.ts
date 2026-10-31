@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { measure, parseAudio } from "../src/audio/analyse.js";
+import { dominantHz, measure, onsets, parseAudio, windows } from "../src/audio/analyse.js";
 
 const sine = (rate: number, seconds: number, amp: number, hz = 997) => Float32Array.from({ length: Math.round(rate * seconds) }, (_, i) => amp * Math.sin((2 * Math.PI * hz * i) / rate));
 
@@ -63,4 +63,30 @@ test("a mono 24-bit AIFF at 44.1 kHz reads the same way, and a full-scale float 
   assert.equal(quiet.silent, true);
   assert.equal(quiet.lufs, null);
   assert.throws(() => parseAudio(Buffer.from("not audio at all")), /not a WAV or AIFF/);
+});
+
+test("windows give peak and RMS per span, the dominant frequency to a hundredth of a hertz, and onsets after silence", () => {
+  const rate = 48000;
+  const tone = sine(rate, 1, 0.5, 440.05);
+  const signal = new Float32Array(rate * 3); // 0.5 s silence, 1 s tone, 0.5 s silence, 1 s tone
+  signal.set(tone, rate * 0.5);
+  signal.set(tone, rate * 2);
+  const audio = { sampleRate: rate, channels: [signal, signal] };
+
+  const w = windows(audio, 500, { min: 100, max: 2000 });
+  assert.deepEqual(w.columns, ["seconds", "peakDbfs", "rmsDbfs", "hz"]);
+  assert.equal(w.rows.length, 6);
+  assert.deepEqual(w.rows[0], [0, -Infinity, -Infinity, null]);
+  assert.equal(w.rows[1][0], 0.5);
+  assert.equal(w.rows[1][1], -6);
+  assert.equal(w.rows[1][2], -9);
+  assert.ok(Math.abs((w.rows[1][3] ?? 0) - 440.05) <= 0.02, `hz ${w.rows[1][3]}`);
+  assert.equal(w.rows[3][3], null, "a silent window has no frequency");
+  assert.deepEqual(onsets(audio, -30), [0.5, 2]);
+  assert.throws(() => windows(audio, 1), /at most 1000 fit/);
+
+  const two = Float64Array.from({ length: rate }, (_, i) => Math.sin((2 * Math.PI * 220 * i) / rate) + 0.3 * Math.sin((2 * Math.PI * 3000 * i) / rate));
+  assert.ok(Math.abs((dominantHz(two, rate, 20, 20000) ?? 0) - 220) <= 0.02, "the stronger partial wins");
+  assert.ok(Math.abs((dominantHz(two, rate, 1000, 5000) ?? 0) - 3000) <= 0.02, "the range picks the weaker one");
+  assert.equal(dominantHz(new Float64Array(rate), rate, 20, 20000), null);
 });
