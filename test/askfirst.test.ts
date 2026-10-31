@@ -22,7 +22,7 @@ async function setUp(t: { after: (fn: () => void) => void }, answers: boolean) {
   const live = new LiveAdapter(initialize(smallSet().activation(), "1.0.0"));
   const bridge = new Bridge({ port: (fakeRemote.address() as net.AddressInfo).port });
   // The .amxd files cannot be listed: a timeout halfway, say.
-  const registry = new M4lRegistry({ directories: ["/lib"], fallback: { list: async () => Promise.reject(new Error("no answer within 20000 ms")), read: async () => Buffer.alloc(0) } });
+  const registry = new M4lRegistry({ directories: ["/lib"], fallback: { list: async () => Promise.reject(new Error("no answer within 20000 ms")), read: async () => Buffer.alloc(0), guide: async () => undefined } });
   registry.via = "bridge";
   const server = createServer({ live, registry, bridge, changes: new ChangeTracker(live), version: "test", log: () => {} });
   const [a, b] = InMemoryTransport.createLinkedPair();
