@@ -10,7 +10,7 @@ line never is), and never runs strings as code: every cmd maps to a cmd_*
 method with fixed parameters. A token is optional: when a file
 .liveremote-token next to this script holds one, every call must carry it.
 
-Commands: ping, amxd_list, amxd_read, guide_read, midi_read, audio_read, browser_uri, clip_envelopes, set_clip_envelope, clear_clip_envelope, lom_dir, lom_doc, reload, device_dir, tracks, devices, add_device, delete_device, create_midi_track,
+Commands: ping, amxd_list, amxd_read, guide_read, m4l_sources, midi_read, audio_read, browser_uri, clip_envelopes, set_clip_envelope, clear_clip_envelope, lom_dir, lom_doc, reload, device_dir, tracks, devices, add_device, delete_device, create_midi_track,
   transport, arms, record, selection, scenes, clips, fire, undo, redo, param, param_strs, param_set_display (for the live-mcp bridge),
 create_audio_track, delete_track, rename_track, select_track, routing,
 routing_options, param, browser, log.
@@ -62,14 +62,25 @@ AMXD_MAX_BYTES = 32 * 1024 * 1024
 AMXD_ENDINGS = (".amxd",)
 
 
+AMXD_LIST_SECONDS = 3.0
+
+
 def amxd_list(dirs):
-    """The .amxd files under the given folders, with modification time and size. Live extensions may not read
-    outside their own folder, so the extension asks the bridge; only .amxd files are listed, and only .amxd files
-    and the .md guide a device's description names are read."""
+    """The .amxd files under the given folders, and the given .amxd files themselves, with modification time and
+    size. Live extensions may not read outside their own folder, so the extension asks the bridge; only .amxd files
+    are listed, and only .amxd files and the .md guide a device's description names are read. The walk runs on
+    Live's main thread, so a large folder (a User Library full of samples) is cut off after AMXD_LIST_SECONDS."""
     found = []
+    seen = set()
+    deadline = time.time() + AMXD_LIST_SECONDS
+
+    def add(path, st):
+        if path not in seen:
+            seen.add(path)
+            found.append({"file": path, "mtime": st.st_mtime * 1000, "size": st.st_size})
 
     def walk(d, depth):
-        if depth > AMXD_MAX_DEPTH or len(found) >= AMXD_MAX_FILES:
+        if depth > AMXD_MAX_DEPTH or len(found) >= AMXD_MAX_FILES or time.time() > deadline:
             return
         try:
             entries = sorted(os.scandir(d), key=lambda e: e.name)
@@ -81,12 +92,131 @@ def amxd_list(dirs):
             if e.is_dir(follow_symlinks=False):
                 walk(e.path, depth + 1)
             elif e.is_file() and e.name.lower().endswith(".amxd"):
-                st = e.stat()
-                found.append({"file": e.path, "mtime": st.st_mtime * 1000, "size": st.st_size})
+                add(e.path, e.stat())
 
     for d in dirs or []:
-        walk(os.path.expanduser(str(d)), 0)
+        d = os.path.expanduser(str(d))
+        if d.lower().endswith(".amxd"):
+            try:
+                if os.path.isfile(d):
+                    add(d, os.stat(d))
+            except OSError:
+                pass
+        else:
+            walk(d, 0)
     return found
+
+
+def _als_root(path):
+    """The LiveSet element of a saved set (.als: gzip-compressed XML)."""
+    import gzip
+    import xml.etree.ElementTree as ET
+    with gzip.open(path, "rb") as f:
+        root = ET.parse(f).getroot()
+    return root.find("LiveSet")
+
+
+def _als_file(device, bases):
+    """The .amxd file a Max for Live device in a saved set comes from: the absolute path the set holds, or, when
+    that file is gone (the set was made on another machine, or moved), its relative path under each base folder."""
+    # PatchSlot/Value/MxPatchRef/FileRef/{Path, RelativePath}; SourceContext holds an older copy of the same.
+    ref = device.find("PatchSlot/Value/MxPatchRef/FileRef")
+    if ref is None:
+        ref = device.find("PatchSlot//FileRef")
+    if ref is None:
+        return None
+    absolute = ref.find("Path")
+    relative = ref.find("RelativePath")
+    candidates = []
+    if absolute is not None and absolute.get("Value"):
+        candidates.append(absolute.get("Value"))
+    if relative is not None and relative.get("Value"):
+        candidates += [os.path.join(b, relative.get("Value")) for b in bases if b]
+    for c in candidates:
+        if c.lower().endswith(".amxd") and os.path.isfile(c):
+            return c
+    return candidates[0] if candidates else None
+
+
+def als_devices(path, bases=()):
+    """The Max for Live devices in a saved set: our address for each (t0/d1, r0/d0, main/d2, t0/d0/c1/d0), the name
+    it had, and the .amxd file it comes from. bases are the folders a relative path may start from (the project
+    folder, the User Library, Live's own resources). The set holds where each device came from; Live's API does not."""
+    live_set = _als_root(path)
+    if live_set is None:
+        return []
+    bases = [os.path.dirname(path)] + [b for b in bases if b]
+    out = []
+
+    def walk(devices, address):
+        if devices is None:
+            return
+        for i, d in enumerate(list(devices)):
+            here = "%s/d%d" % (address, i)
+            if d.tag.startswith("MxDevice"):
+                name = d.find("UserName")
+                out.append({"address": here, "name": name.get("Value") if name is not None else "",
+                            "file": _als_file(d, bases)})
+            branches = d.find("Branches")
+            if branches is not None:
+                for k, branch in enumerate(list(branches)):
+                    chain = branch.find("DeviceChain")
+                    inner = None
+                    if chain is not None:
+                        for c in chain:
+                            if c.find("Devices") is not None:
+                                inner = c.find("Devices")
+                                break
+                    walk(inner, "%s/c%d" % (here, k))
+
+    tracks = live_set.find("Tracks")
+    t = r = 0
+    for track in list(tracks) if tracks is not None else []:
+        if track.tag == "ReturnTrack":
+            address, r = "r%d" % r, r + 1
+        else:
+            address, t = "t%d" % t, t + 1
+        walk(track.find("DeviceChain/DeviceChain/Devices"), address)
+    for main in ("MainTrack", "MasterTrack"):
+        m = live_set.find(main)
+        if m is not None:
+            walk(m.find("DeviceChain/DeviceChain/Devices"), "main")
+            break
+    return out
+
+
+_ALS_CACHE = {}
+
+
+def als_devices_cached(path, bases=()):
+    """als_devices, read again only when the set file has changed (it is parsed on Live's main thread)."""
+    try:
+        key = (path, os.path.getmtime(path))
+    except OSError:
+        return []
+    if _ALS_CACHE.get("key") != key:
+        _ALS_CACHE.clear()
+        _ALS_CACHE.update(key=key, devices=als_devices(path, bases))
+    return _ALS_CACHE["devices"]
+
+
+def _user_library():
+    """The User Library this script is installed in (User Library/Remote Scripts/LiveRemote/LiveRemote.py)."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    lib = os.path.dirname(os.path.dirname(here))
+    return lib if os.path.basename(os.path.dirname(here)) == "Remote Scripts" else None
+
+
+def _live_resources():
+    """Live's own resources (…/Contents/App-Resources/Builtin), where Live's own Max for Live devices lie."""
+    import sys
+    p = os.path.abspath(sys.executable or "")
+    while p and p != os.path.dirname(p):
+        if p.endswith(".app"):
+            b = os.path.join(p, "Contents", "App-Resources", "Builtin")
+            return b if os.path.isdir(b) else None
+        p = os.path.dirname(p)
+    return None
 
 
 def _real(path):
@@ -771,7 +901,46 @@ class LiveRemote(ControlSurface):
         before = [d.name for d in t.devices]
         self.application().browser.load_item(item)
         after = [d.name for d in t.devices]
-        return {"from": label, "item": item.name, "devices_before": before, "devices_after": after}
+        return {"from": label, "item": item.name, "uri": item.uri, "devices_before": before, "devices_after": after}
+
+    def cmd_m4l_sources(self):
+        """Where the Max for Live devices in the set may come from, since Live's API never says which file a device
+        was loaded from: the addresses of the Max for Live devices in the set now, the folders under Places, and the
+        saved set's own record of each device's .amxd file (as of the last save; none for a set never saved)."""
+        song = self.song()
+        max_devices = []
+
+        def walk(devices, address):
+            for i, d in enumerate(devices):
+                here = "%s/d%d" % (address, i)
+                if str(getattr(d, "class_name", "")).startswith("Mx"):
+                    max_devices.append({"address": here, "name": d.name})
+                if getattr(d, "can_have_chains", False):
+                    for k, c in enumerate(d.chains):
+                        walk(c.devices, "%s/c%d" % (here, k))
+
+        for i, t in enumerate(song.tracks):
+            walk(t.devices, "t%d" % i)
+        for i, t in enumerate(song.return_tracks):
+            walk(t.devices, "r%d" % i)
+        walk(song.master_track.devices, "main")
+        places = []
+        for f in self.application().browser.user_folders:
+            uri = str(getattr(f, "uri", ""))
+            if uri.startswith("userfolder:"):
+                from urllib.parse import unquote
+                folder = unquote(uri[len("userfolder:"):].split("#", 1)[0])
+                if os.path.isdir(folder):
+                    places.append(folder)
+        path = str(getattr(song, "file_path", "") or "")
+        saved = []
+        error = None
+        if path.lower().endswith(".als") and os.path.isfile(path):
+            try:
+                saved = als_devices_cached(path, [_user_library(), _live_resources()])
+            except Exception as e:  # a set Live is writing just now, or one this reader does not understand
+                error = "%s: %s" % (type(e).__name__, e)
+        return {"set": path or None, "saved": saved, "savedError": error, "max": max_devices, "places": places}
 
     def cmd_routing_options(self, track):
         t = self._track(track)
