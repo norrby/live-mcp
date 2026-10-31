@@ -131,6 +131,7 @@ Not affiliated with or endorsed by Ableton. Use at your own risk.
 
 - [docs/architecture.md](docs/architecture.md): how Live MCP works, from the big picture down.
 - [docs/development.md](docs/development.md): building it yourself, configuration, the full list of tools.
+- [docs/field-notes.md](docs/field-notes.md): the bugs met while building it, how they were found and fixed.
 
 ## License
 
