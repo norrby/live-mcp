@@ -63,6 +63,12 @@ test("the file the saved set, a load or Places names is read even outside the fo
     await origins.remember("#2", release);
     assert.equal(registry.match(names, "Filter", origins.originOf("#2"))?.file, release, "a device Live MCP loaded comes from the file it chose");
 
+    const bare = path.join(places, "Bare.amxd");
+    fs.writeFileSync(bare, amxd([]));
+    await origins.remember("#4", bare);
+    assert.equal(registry.match(["Device On"], "Bare")?.file, undefined, "no parameters of its own: nothing to fingerprint");
+    assert.equal(registry.match(["Device On"], "Bare", origins.originOf("#4"))?.file, bare, "but the file it is known to come from names it");
+
     sources = { set: null, saved: [], max: [{ address: "t0/d0", name: "FilterBass" }], places: [] };
     await origins.sync(true);
     assert.equal(origins.originOf("#2"), undefined, "a device deleted since is forgotten");

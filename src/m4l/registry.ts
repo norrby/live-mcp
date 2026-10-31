@@ -235,13 +235,14 @@ export class M4lRegistry {
    * or when the files that share the fingerprint differ, which no name can settle.
    */
   matches(liveNames: string[], deviceName?: string, origin?: string): M4lDevice[] {
-    if (liveNames.length < 2) return [];
     this.scan();
     const key = fingerprint(liveNames);
     // The file the device is known to come from (the saved set names it, or Live MCP loaded it) wins over any
     // other, provided its parameters are still the ones the device shows; a device saved, then edited, is not.
+    // Known this way, even a device with no parameters of its own is recognised.
     const known = origin ? this.entries.get(origin) : undefined;
     if (known && known.fingerprint === key) return [known.device];
+    if (liveNames.length < 2) return [];
     const hits = [...this.entries.values()].filter((e) => e.fingerprint === key);
     if (hits.length === 0) return [];
     const detail = (d: M4lDevice) => fingerprint(d.parameters.map((p) => `${p.longName}|${p.min}|${p.max}|${p.unit ?? ""}|${(p.choices ?? []).join(",")}`));
