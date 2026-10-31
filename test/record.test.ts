@@ -69,4 +69,11 @@ test("record names its tracks to the bridge, and stop reports what the take adde
   assert.deepEqual(stopped.take.added.map((x: { clip: string; notes: number }) => [x.clip, x.notes]), [["t0/a0", 0], ["t0/a1", 0]]);
   assert.match(stopped.take.warnings.join("\n"), /t0\/a0 on 1-MIDI has no notes/);
   assert.equal((await call("transport", { action: "stop" })).data.take, undefined, "the report comes once");
+
+  // Stopped in Live's window instead: the next look at the transport ends the take, and later clips are not in it.
+  await call("transport", { action: "record", tracks: ["t0"] });
+  const ended = (await call("transport")).data;
+  assert.deepEqual(ended.take.added, []);
+  await call("create_clip", { track: "t0", start: 96, length: 4, name: "later" });
+  assert.equal((await call("transport", { action: "stop" })).data.take, undefined, "a clip made after the take is not reported as its");
 });

@@ -539,9 +539,12 @@ export function createServer(deps: ServerDeps): McpServer {
       if (action !== "record") {
         if (tracks || start !== undefined) throw new LiveError("tracks and start go with action record only");
         const status = await bridge.call<Record<string, unknown>>("transport", [], action ? { action } : {});
-        if (!takes.has(live) || (action !== "stop" && action !== "record_off")) return status;
+        if (!takes.has(live)) return status;
+        // A take the user stopped in Live's window ends here, so its report does not take in clips made afterwards.
+        const endedInLive = !action && status.record_mode === false && status.is_playing === false;
+        if (action !== "stop" && action !== "record_off" && !endedInLive) return status;
         const report = takeReport();
-        if (action === "stop") takes.delete(live);
+        if (action === "stop" || endedInLive) takes.delete(live);
         return { ...status, take: report };
       }
       if (!tracks?.length) throw new LiveError("record needs tracks: every track to record on (arm them first with set_track)");
