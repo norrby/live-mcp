@@ -570,6 +570,13 @@ class LiveRemote(ControlSurface):
             t.name = name
         return self._tracks_all().index(t)
 
+    def cmd_create_return_track(self, name=None):
+        """A new return track, last; returns its index in tracks + returns + master."""
+        t = self.song().create_return_track()
+        if name:
+            t.name = name
+        return self._tracks_all().index(t)
+
     def cmd_create_audio_track(self, index=-1, name=None):
         t = self.song().create_audio_track(int(index))
         if name:
