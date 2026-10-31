@@ -189,7 +189,7 @@ it. `get_capabilities` asks LiveRemote for a `ping` to tell which of the two it 
 Recognising involves the **`.amxd` reader**, the **registry** and the **fingerprint**.
 
 - **The problem:** for a Max for Live device, Live reports only each parameter's short name, and those repeat: a
-  synth editor may have twelve parameters called "A". The long names, units, choices and help texts are only in
+  synth editor may have four parameters called "A", the attack of each envelope. The long names, units, choices and help texts are only in
   the device's `.amxd` file.
 - **The reader** (`amxd.ts`) opens an `.amxd` file, frozen or not, finds the patcher inside it, and lists the
   parameters in the order Live shows them: Live's own "Device On" first, then the visible parameters sorted by
