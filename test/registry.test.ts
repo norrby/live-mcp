@@ -21,6 +21,7 @@ test("when Live forbids reading the folders, the registry reads the .amxd files 
   const source: AmxdSource = {
     list: async (dirs) => (assert.deepEqual(dirs, ["/lib"]), Object.entries(files).map(([file, f]) => ({ file, mtime: f.mtime }))),
     read: async (file) => (reads++, files[file].bytes),
+    guide: async () => undefined,
   };
   const registry = new M4lRegistry({ directories: ["/lib"], fallback: source });
   // Simulate Live's permission model: the first direct read is refused the way Node refuses it.
@@ -55,16 +56,17 @@ test("when Live forbids reading the folders, the registry reads the .amxd files 
   assert.equal(registry.files().length, 0, "a removed file is forgotten");
 });
 
-test("through the bridge, an unfrozen device's guide beside it comes with the device and is read again on its own when it changes", async () => {
+test("through the bridge, an unfrozen device's guide is asked for by the name its description gives, and parsed again only when it changed", async () => {
   const files: Record<string, { mtime: number; bytes: Buffer }> = {
     "/lib/Filter.amxd": { mtime: 1, bytes: amxd([["Cutoff Frequency", "Freq"], ["Resonance Amount", "Res"]], "A filter. Its guide is beside it as filter-guide.md.") },
-    "/lib/filter-guide.md": { mtime: 1, bytes: Buffer.from("# Filter\n\nA filter.\n\n## Cutoff\nWhere it starts to cut.\n") },
-    "/lib/README.md": { mtime: 1, bytes: Buffer.from("not a guide: no description names it") },
   };
+  let guide: { mtime: number; text: string } | undefined = { mtime: 1, text: "# Filter\n\nA filter.\n\n## Cutoff\nWhere it starts to cut.\n" };
   const reads: string[] = [];
+  const asked: string[] = [];
   const source: AmxdSource = {
     list: async () => Object.entries(files).map(([file, f]) => ({ file, mtime: f.mtime })),
     read: async (file) => (reads.push(file), files[file].bytes),
+    guide: async (file) => (asked.push(file), guide),
   };
   const registry = new M4lRegistry({ directories: ["/lib"], fallback: source });
   registry.via = "bridge";
@@ -72,25 +74,27 @@ test("through the bridge, an unfrozen device's guide beside it comes with the de
   const m = registry.match(["Device On", "Freq", "Res"]);
   assert.equal(m?.guide?.title, "Filter");
   assert.deepEqual(m?.guide?.sections.map((s) => s.name), ["Cutoff"]);
-  assert.deepEqual(reads, ["/lib/Filter.amxd", "/lib/filter-guide.md"], "the README is not named and is not read");
-  assert.equal(registry.files().length, 1, "guides are not devices");
-  await registry.refresh(); // match() and files() started a background rescan; let it finish before changing the files
+  assert.deepEqual(reads, ["/lib/Filter.amxd"]);
+  assert.deepEqual(asked, ["/lib/filter-guide.md"], "the guide is asked for by the name the description gives");
+  await registry.refresh(); // match() started a background rescan; let it finish before changing the files
+  const parsed = registry.match(["Device On", "Freq", "Res"])?.guide;
 
-  files["/lib/filter-guide.md"] = { mtime: 2, bytes: Buffer.from("## Cutoff\nRewritten.\n") };
+  guide = { mtime: 2, text: "## Cutoff\nRewritten.\n" };
   await registry.refresh();
-  assert.deepEqual(reads.slice(2), ["/lib/filter-guide.md"], "a changed guide is read again without the device file");
   assert.equal(registry.match(["Device On", "Freq", "Res"])?.guide?.sections[0].text, "Rewritten.");
+  assert.deepEqual(reads, ["/lib/Filter.amxd"], "a changed guide does not make the device file be read again");
+  await registry.refresh();
+  assert.notEqual(registry.match(["Device On", "Freq", "Res"])?.guide, parsed);
 
-  delete files["/lib/filter-guide.md"];
+  guide = undefined;
   await registry.refresh();
   assert.equal(registry.match(["Device On", "Freq", "Res"])?.guide, undefined, "a removed guide is forgotten");
-  assert.equal(reads.length, 3);
 });
 
 test("an unreachable bridge leaves an explanation instead of an exception", async () => {
   const registry = new M4lRegistry({
     directories: ["/lib"],
-    fallback: { list: async () => Promise.reject(new Error("LiveRemote is not reachable")), read: async () => Buffer.alloc(0) },
+    fallback: { list: async () => Promise.reject(new Error("LiveRemote is not reachable")), read: async () => Buffer.alloc(0), guide: async () => undefined },
   });
   registry.via = "bridge";
   await registry.refresh();

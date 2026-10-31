@@ -9,10 +9,12 @@ import * as path from "node:path";
 import { readAmxd, type M4lDevice } from "./amxd.js";
 import { parseGuide } from "./guide.js";
 
-/** Lists and reads .amxd and .md files for the registry when it may not touch them itself (the LiveRemote bridge). */
+/** Lists and reads the .amxd files, and reads a guide, for the registry when it may not touch them itself (the LiveRemote bridge). */
 export interface AmxdSource {
   list(directories: string[]): Promise<{ file: string; mtime: number }[]>;
   read(file: string): Promise<Buffer>;
+  /** the .md file an unfrozen device's description names, beside it: its text and modification time, or undefined when there is none */
+  guide(file: string): Promise<{ text: string; mtime: number } | undefined>;
 }
 
 export interface RegistryOptions {
@@ -31,8 +33,6 @@ interface Entry {
   guideMtimeMs?: number;
   fingerprint: string;
 }
-
-const isAmxd = (file: string) => file.toLowerCase().endsWith(".amxd");
 
 /** The guide file beside an unfrozen device, when its description names one; a frozen device carries its own. */
 const guideFileOf = (device: M4lDevice): string | undefined =>
@@ -109,24 +109,21 @@ export class M4lRegistry {
     this.refreshing ??= (async () => {
       const errors: string[] = [];
       try {
-        const listed = await source.list(this.options.directories);
-        const guides = new Map(listed.filter((f) => !isAmxd(f.file)).map((f) => [f.file, f.mtime]));
-        const devices = listed.filter((f) => isAmxd(f.file)).slice(0, this.options.maxFiles ?? 500);
+        const devices = (await source.list(this.options.directories)).slice(0, this.options.maxFiles ?? 500);
         const seen = new Set(devices.map((f) => f.file));
         for (const { file, mtime } of devices) {
           const have = this.entries.get(file);
           const same = have !== undefined && have.mtimeMs === mtime;
-          const guideFile = same ? guideFileOf(have.device) : undefined;
-          const guideMtime = guideFile ? guides.get(guideFile) : undefined;
-          if (same && have.guideMtimeMs === guideMtime) continue;
+          if (same && !guideFileOf(have.device)) continue;
           try {
             // A bridge failure here ends the refresh as unfinished; an unreadable file is skipped with a note.
             const device = same ? have.device : readAmxd(file, await source.read(file));
             const beside = guideFileOf(device);
-            const besideMtime = beside ? guides.get(beside) : undefined;
-            if (beside && besideMtime !== undefined) device.guide = parseGuide((await source.read(beside)).toString("utf8"), beside);
-            else if (beside) delete device.guide;
-            this.put(file, mtime, device, besideMtime);
+            // An unfrozen device's guide is asked for by name on every refresh, since only the bridge can see whether it changed.
+            const guide = beside ? await source.guide(beside) : undefined;
+            if (beside && !guide) delete device.guide;
+            else if (guide && !(same && have.guideMtimeMs === guide.mtime)) device.guide = parseGuide(guide.text, beside!);
+            this.put(file, mtime, device, guide?.mtime);
           } catch (e) {
             if (e instanceof Error && !/^[^:]*\.amxd: /.test(e.message) && !(e as NodeJS.ErrnoException).code) throw e;
             this.entries.delete(file);

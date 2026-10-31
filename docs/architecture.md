@@ -196,9 +196,9 @@ Recognising involves the **`.amxd` reader**, the **registry** and the **fingerpr
   long name.
 - **The registry** (`registry.ts`) reads every `.amxd` file in the configured folders, and reads a file again only
   when it has changed. An installed extension may not read those folders, so then the registry asks the bridge to
-  list and read the files instead (the commands `amxd_list` and `amxd_read`, which read `.amxd` files and the `.md`
-  files in the same folders, and nothing else). That happens in the background, so a device is recognised from the
-  next call after the files arrive.
+  list and read the files instead (the commands `amxd_list` and `amxd_read`, which list and read `.amxd` files, and
+  `guide_read`, which reads the one `.md` file a device's description names, and nothing else). That happens in the
+  background, so a device is recognised from the next call after the files arrive.
 - **The fingerprint** is the list of short names in that order. When a tool shows a device, the registry compares
   the device's names in Live with every file's fingerprint. Exactly one match means the device is recognised.
 
@@ -221,7 +221,8 @@ A recognised device also brings what the assistant needs to drive it without bei
   assistant as `about`, so an author can say there how the device is meant to be used.
 - **The author's guide,** a Markdown file the description names (`guide.ts`). A frozen device carries it among
   its embedded files, which the reader finds through the file's dependency list; an unfrozen device has it beside
-  the `.amxd` file, and the registry reads that one with the device and again when it changes. Where the help texts
+  the `.amxd` file, and the registry reads that one, by the name the description gives, with the device and again
+  when it changes. Where the help texts
   explain one control each, the guide explains the instrument: signal path, tables, patches, limits. The assistant
   gets its section headings with the parameters (`m4l.guide`) and one section at a time through `device_guide`, so
   a large manual never lands in a small model's answer.

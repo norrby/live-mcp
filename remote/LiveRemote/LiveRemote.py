@@ -10,7 +10,7 @@ line never is), and never runs strings as code: every cmd maps to a cmd_*
 method with fixed parameters. A token is optional: when a file
 .liveremote-token next to this script holds one, every call must carry it.
 
-Commands: ping, amxd_list, amxd_read, midi_read, audio_read, browser_uri, clip_envelopes, set_clip_envelope, clear_clip_envelope, lom_dir, lom_doc, reload, device_dir, tracks, devices, add_device, delete_device, create_midi_track,
+Commands: ping, amxd_list, amxd_read, guide_read, midi_read, audio_read, browser_uri, clip_envelopes, set_clip_envelope, clear_clip_envelope, lom_dir, lom_doc, reload, device_dir, tracks, devices, add_device, delete_device, create_midi_track,
   transport, arms, record, selection, scenes, clips, fire, undo, redo, param, param_strs, param_set_display (for the live-mcp bridge),
 create_audio_track, delete_track, rename_track, select_track, routing,
 routing_options, param, browser, log.
@@ -59,15 +59,14 @@ def load_token():
 AMXD_MAX_FILES = 500
 AMXD_MAX_DEPTH = 6
 AMXD_MAX_BYTES = 32 * 1024 * 1024
-AMXD_ENDINGS = (".amxd", ".md")
+AMXD_ENDINGS = (".amxd",)
 
 
 def amxd_list(dirs):
-    """The .amxd files under the given folders, and the .md files in the same folders (an unfrozen device's guide
-    lies beside it), with modification time and size. Live extensions may not read outside their own folder, so
-    the extension asks the bridge; only .amxd and .md files are listed or read."""
+    """The .amxd files under the given folders, with modification time and size. Live extensions may not read
+    outside their own folder, so the extension asks the bridge; only .amxd files are listed, and only .amxd files
+    and the .md guide a device's description names are read."""
     found = []
-    guides = {}  # folder -> the .md files in it; kept only for folders that hold an .amxd file
 
     def walk(d, depth):
         if depth > AMXD_MAX_DEPTH or len(found) >= AMXD_MAX_FILES:
@@ -84,14 +83,9 @@ def amxd_list(dirs):
             elif e.is_file() and e.name.lower().endswith(".amxd"):
                 st = e.stat()
                 found.append({"file": e.path, "mtime": st.st_mtime * 1000, "size": st.st_size})
-            elif e.is_file() and e.name.lower().endswith(".md"):
-                st = e.stat()
-                guides.setdefault(d, []).append({"file": e.path, "mtime": st.st_mtime * 1000, "size": st.st_size})
 
     for d in dirs or []:
         walk(os.path.expanduser(str(d)), 0)
-    for folder in sorted(set(os.path.dirname(f["file"]) for f in found)):
-        found.extend(guides.get(folder, []))
     return found
 
 
@@ -130,8 +124,23 @@ def audio_read(path, offset=0, size=AUDIO_CHUNK_MAX):
 
 
 def amxd_read(path):
-    """One .amxd file, or the .md guide beside one, as base64."""
-    return _read_b64(path, AMXD_ENDINGS, "an .amxd or .md file")
+    """One .amxd file as base64."""
+    return _read_b64(path, AMXD_ENDINGS, "an .amxd file")
+
+
+def guide_read(path):
+    """An unfrozen device's guide, the .md file beside it that its description names: its text and modification
+    time, or None when there is no such file."""
+    path = _real(path)
+    if not path.lower().endswith(".md"):
+        raise ValueError("not an .md file: %r" % path)
+    if not os.path.isfile(path):
+        return None
+    if os.path.getsize(path) > AMXD_MAX_BYTES:
+        raise ValueError("%s is larger than %d bytes" % (path, AMXD_MAX_BYTES))
+    with open(path, "rb") as f:
+        text = f.read().decode("utf-8", "replace")
+    return {"text": text, "mtime": os.path.getmtime(path) * 1000}
 
 
 def midi_read(path):
@@ -321,6 +330,9 @@ class LiveRemote(ControlSurface):
 
     def cmd_amxd_read(self, path):
         return amxd_read(path)
+
+    def cmd_guide_read(self, path):
+        return guide_read(path)
 
     def cmd_midi_read(self, path):
         return midi_read(path)

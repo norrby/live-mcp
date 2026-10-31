@@ -81,6 +81,7 @@ export class Bridge {
     return {
       list: (directories: string[]) => this.call<{ file: string; mtime: number }[]>("amxd_list", [directories]),
       read: async (file: string) => Buffer.from(await this.call<string>("amxd_read", [file]), "base64"),
+      guide: async (file: string) => (await this.call<{ text: string; mtime: number } | null>("guide_read", [file])) ?? undefined,
     };
   }
 
