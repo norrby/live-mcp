@@ -483,7 +483,7 @@ export function createServer(deps: ServerDeps): McpServer {
   server.registerTool(
     "load_browser_item",
     {
-      description: "Load any loadable browser item onto a track by name: a saved preset (\"My Synth.adv\" keeps everything it was saved with, including an External Instrument's MIDI To / Audio From), a Max for Live device (\"My Device.amxd\"), a plug-in or a built-in device. Live places it after the track's selected device, or last, and selects the track while doing so. The first match across the browser roots wins; use browse to see what exists. A MIDI file (.mid) does not load this way: use import_midi_file. Answers once the new device is ready to be driven (ready, readyAfterMs: its parameters exist and have held still, at least a second after loading, plus settleMs for a Max for Live device, whose own patch may still be setting itself up while its parameters look still; ready false after 15 s)." + viaBridge,
+      description: "Load any loadable browser item onto a track by name: a saved preset (\"My Synth.adv\" keeps everything it was saved with, including an External Instrument's MIDI To / Audio From), a Max for Live device (\"My Device.amxd\"), a plug-in or a built-in device. Live places it after the track's selected device, or last, and selects the track while doing so. The first match across the browser roots wins; use browse to see what exists. A MIDI file (.mid) does not load this way: use import_midi_file. Answers once the new device is ready to be driven (ready, readyAfterMs: its parameters exist and have held still, at least a second after loading, then for a Max for Live device until its parameter marked [ready] reaches its max, or, without one, settleMs more, since its patch may still be setting itself up while its parameters look still; ready false after 15 s)." + viaBridge,
       inputSchema: {
         track: address,
         item: z.string().describe("Name as the browser shows it, with or without extension"),
@@ -497,12 +497,27 @@ export function createServer(deps: ServerDeps): McpServer {
       const added = holder.devices.findIndex((d) => !before.includes(live.id(d)));
       if (added < 0) return { loaded: loaded.item, from: loaded.from, note: "Live reported no new device on the track; it may have replaced the selected device or loaded a preset into it." };
       const device = holder.devices[added];
-      const { ready, ms } = await settled(device);
-      // Live sends a Max for Live device its stored values for a while after its parameters look still; a value set
-      // before those arrive can be overwritten by them.
-      const settle = settleMs ?? (/\.amxd$/i.test(item) || m4lFor(live.id(device)) ? 3000 : 0);
-      if (ready && settle) await new Promise((r) => setTimeout(r, settle));
-      return { loaded: loaded.item, from: loaded.from, ready, readyAfterMs: ready ? ms + settle : ms, device: live.deviceInfo(holder.devices[added], `${track}/d${added}`) };
+      const t0 = Date.now();
+      const { ready } = await settled(device);
+      // A device file saved just now is not known yet; read the files again so its [ready] mark is found.
+      if (/\.amxd$/i.test(item)) {
+        registry.scan(true);
+        if (registry.via === "bridge") await registry.refresh();
+      }
+      const m4l = m4lFor(live.id(device));
+      const signal = m4l?.parameters.findIndex((p) => p.ready) ?? -1;
+      let waited = ready;
+      if (ready && signal >= 0) {
+        // The author's own word that the device is ready: its [ready] parameter at its max.
+        const p = device.parameters[signal];
+        while (!(waited = (await p.getValue()) >= p.max) && Date.now() - t0 < 15_000) await new Promise((r) => setTimeout(r, 100));
+      } else if (ready) {
+        // Without one: Live sends a Max for Live device its stored values for a while after its parameters look
+        // still, and a value set before those arrive can be overwritten by them.
+        const settle = settleMs ?? (/\.amxd$/i.test(item) || m4l ? 3000 : 0);
+        if (settle) await new Promise((r) => setTimeout(r, settle));
+      }
+      return { loaded: loaded.item, from: loaded.from, ready: waited, readyAfterMs: Date.now() - t0, ...(signal >= 0 ? { readyBy: "the device's [ready] parameter" } : {}), device: live.deviceInfo(holder.devices[added], `${track}/d${added}`) };
     }),
   );
 
@@ -1140,5 +1155,6 @@ function compactParam(p: ParameterInfo, m?: M4lParameter, help = true): Record<s
   if (p.items) out.items = p.items;
   if (help && m?.help) out.help = m.help;
   if (m?.askFirst) out.askFirst = true;
+  if (m?.ready) out.readySignal = true;
   return out;
 }

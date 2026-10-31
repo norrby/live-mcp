@@ -22,6 +22,8 @@ export interface M4lParameter {
   help?: string;
   /** the author marked it "[ask first]" in its help text: change it only when the user asked for it */
   askFirst?: boolean;
+  /** the author marked it "[ready]": it starts at 0 and the device sets it to its max when it is ready to be driven */
+  ready?: boolean;
   helpName?: string;
 }
 
@@ -38,6 +40,8 @@ export interface M4lDevice {
 
 /** The tag an author puts in a parameter's Info View text to say that a program may change it only on request. */
 export const ASK_FIRST = /\[ask first\]/gi;
+/** The tag for the parameter a device sets to its max once it has set itself up after loading. */
+export const READY = /\[ready\]/gi;
 
 const UNIT_STYLES: Record<number, string | undefined> = { 0: undefined, 1: undefined, 2: "ms", 3: "Hz", 4: "dB", 5: "%", 6: "pan", 7: "st", 8: "note", 9: undefined, 10: undefined };
 
@@ -112,9 +116,11 @@ export function parametersOf(json: unknown): M4lParameter[] {
         if (Array.isArray(v.parameter_initial) && typeof v.parameter_initial[0] === "number") p.initial = v.parameter_initial[0];
         if (box.annotation) {
           const tagged = ASK_FIRST.test(box.annotation);
-          const help = box.annotation.replace(ASK_FIRST, " ").replace(/\s+/g, " ").trim();
+          const ready = READY.test(box.annotation);
+          const help = box.annotation.replace(ASK_FIRST, " ").replace(READY, " ").replace(/\s+/g, " ").trim();
           if (help) p.help = help;
           if (tagged) p.askFirst = true;
+          if (ready) p.ready = true;
         }
         if (box.annotation_name) p.helpName = box.annotation_name;
         out.push(p);

@@ -28,6 +28,14 @@ test("parametersOf walks subpatchers and reads units, choices, help", () => {
   assert.equal(all[3].initial, 3);
 });
 
+test("[ask first] and [ready] in a help text become marks and leave the help", () => {
+  const [push, ready] = parametersOf({
+    patcher: { boxes: [box("Push", "Push", {}, { annotation: "Sends the patch. [ask first]" }), box("Ready", "Ready", {}, { annotation: "Set up and listening. [ready]" })] },
+  });
+  assert.deepEqual([push.help, push.askFirst, push.ready], ["Sends the patch.", true, undefined]);
+  assert.deepEqual([ready.help, ready.askFirst, ready.ready], ["Set up and listening.", undefined, true]);
+});
+
 test("liveOrder puts Device On first and sorts visible parameters by long name in code-unit order", () => {
   const all = parametersOf({
     patcher: { boxes: [box("Legato", "Leg"), box("LFO1 Speed", "Speed"), box("Hidden", "H", { parameter_invisible: 2 }), box("Attack", "A")] },

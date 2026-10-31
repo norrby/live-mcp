@@ -119,6 +119,13 @@ Live MCP reads three things from your `.amxd` file and passes them to the assist
   which parameter selects what others edit, what a button really does.
 - **`[ask first]`** at the end of a parameter's Info View text marks it as changed only when the user asks.
   Live MCP refuses to change it from its default otherwise.
+- **`[ready]`** at the end of a parameter's Info View text marks the parameter that says the device has set itself
+  up after loading. Give it an initial value of 0 (Initial Enable on), and have the patch set it to its maximum once
+  it is ready to be driven: once it has taken the values Live restores and anything it sets up itself. A program
+  that loads the device then waits for it instead of guessing a time. Without one, Live MCP waits a fixed few seconds
+  after loading a Max for Live device, which is either too long or, for a slow device, too short.
+
+These are plain text conventions, so any program can follow them; we hope others will.
 
 ## Folders
 
