@@ -248,7 +248,8 @@ value it receives per parameter after loading. Nothing in Live says when a patch
 **Fix.** A convention for device authors: a parameter whose help text ends with `[ready]` starts at 0 and is set to
 its maximum by the patch when it is ready; `insert_device` waits for it, or for a settle time (`settleMs`) otherwise,
 and waits up to ten seconds for the device to appear in the first place. The convention is documented for other
-authors.
+authors. It is not free: the write to the flag is an undo step, and the editor that first carried it dropped it again
+the same evening, once that cost showed (see the next note but one); it now relies on the settle time.
 
 **Lesson.** "Created" and "ready" are different moments for anything that runs its own program.
 
@@ -316,7 +317,9 @@ produced the step that the next undo would take back, and the loading of the dev
 
 **Fix.** On the device's side: the knobs are not written when there is no step under them, a knob is never written
 before Live has restored it, and the bank switching starts from the bank the device is built with. A freshly loaded
-editor then goes away after three undos: its ready flag, its hidden version number, and the load itself. Live MCP
+editor then went away after three undos: its ready flag, its hidden version number, and the load itself. The author
+went further and took away the first two writes as well, the ready flag among them, since two undos to remove a device
+confuse a user: a new editor now goes with one undo, and `load_browser_item` waits its settle time instead. Live MCP
 cannot tell, when `undo` is asked for, how many steps a device added; the `undo` tool is still one step, as Live's
 own Cmd+Z is.
 
