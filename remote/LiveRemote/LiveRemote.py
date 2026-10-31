@@ -63,11 +63,11 @@ AMXD_ENDINGS = (".amxd", ".md")
 
 
 def amxd_list(dirs):
-    """The .amxd files under the given folders, and the .md guides beside them, with modification time and size.
-    Live extensions may not read outside their own folder, so the extension asks the bridge; only .amxd and .md
-    files are listed or read."""
+    """The .amxd files under the given folders, and the .md files in the same folders (an unfrozen device's guide
+    lies beside it), with modification time and size. Live extensions may not read outside their own folder, so
+    the extension asks the bridge; only .amxd and .md files are listed or read."""
     found = []
-    guides = {}  # path without its ending -> the .md file's entry; kept only beside an .amxd file of that name
+    guides = {}  # folder -> the .md files in it; kept only for folders that hold an .amxd file
 
     def walk(d, depth):
         if depth > AMXD_MAX_DEPTH or len(found) >= AMXD_MAX_FILES:
@@ -86,14 +86,12 @@ def amxd_list(dirs):
                 found.append({"file": e.path, "mtime": st.st_mtime * 1000, "size": st.st_size})
             elif e.is_file() and e.name.lower().endswith(".md"):
                 st = e.stat()
-                guides[e.path[:-3]] = {"file": e.path, "mtime": st.st_mtime * 1000, "size": st.st_size}
+                guides.setdefault(d, []).append({"file": e.path, "mtime": st.st_mtime * 1000, "size": st.st_size})
 
     for d in dirs or []:
         walk(os.path.expanduser(str(d)), 0)
-    for f in list(found):
-        guide = guides.get(f["file"][:-5])
-        if guide:
-            found.append(guide)
+    for folder in sorted(set(os.path.dirname(f["file"]) for f in found)):
+        found.extend(guides.get(folder, []))
     return found
 
 
