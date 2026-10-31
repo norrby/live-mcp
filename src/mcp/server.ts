@@ -494,10 +494,15 @@ export function createServer(deps: ServerDeps): McpServer {
       const holder = live.track(track);
       const before = holder.devices.map((d) => live.id(d));
       const loaded = await bridge.call<{ from: string; item: string; devices_after: string[] }>("add_device", [bridgeTrackIndex(live, track), item]);
-      const added = holder.devices.findIndex((d) => !before.includes(live.id(d)));
-      if (added < 0) return { loaded: loaded.item, from: loaded.from, note: "Live reported no new device on the track; it may have replaced the selected device or loaded a preset into it." };
-      const device = holder.devices[added];
+      // Live may add a large device a moment after the bridge has answered.
       const t0 = Date.now();
+      let added = holder.devices.findIndex((d) => !before.includes(live.id(d)));
+      while (added < 0 && Date.now() - t0 < 10_000) {
+        await new Promise((r) => setTimeout(r, 100));
+        added = holder.devices.findIndex((d) => !before.includes(live.id(d)));
+      }
+      if (added < 0) return { loaded: loaded.item, from: loaded.from, note: "No new device appeared on the track within 10 s; Live may have replaced the selected device or loaded a preset into it." };
+      const device = holder.devices[added];
       const { ready } = await settled(device);
       // A device file saved just now is not known yet; read the files again so its [ready] mark is found.
       if (/\.amxd$/i.test(item)) {
