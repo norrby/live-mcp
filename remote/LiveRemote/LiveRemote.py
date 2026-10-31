@@ -23,10 +23,11 @@ import json
 import math
 import os
 import queue
+import re
 import secrets
 import socket
 import threading
-import re
+import time
 import traceback
 
 from _Framework.ControlSurface import ControlSurface
@@ -34,6 +35,7 @@ from _Framework.ControlSurface import ControlSurface
 HOST, PORT = "127.0.0.1", 9870
 MAIN_THREAD_TIMEOUT = 20.0
 MAX_REQUEST_BYTES = 16 * 1024 * 1024
+FIND_SECONDS = 5.0
 TOKEN_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".liveremote-token")
 
 
@@ -615,9 +617,11 @@ class LiveRemote(ControlSurface):
                 roots.append((attr, root))
         return roots
 
-    def _find_item(self, name, max_depth=6):
+    def _find_item(self, name, max_depth=6, seconds=FIND_SECONDS):
         want = str(name).lower()
         stem = want.rsplit(".", 1)[0]
+        # The search runs on Live's main thread, so Live's window stands still meanwhile: give up after a while.
+        deadline = time.monotonic() + seconds
 
         def match(item):
             n = item.name.lower()
@@ -626,6 +630,9 @@ class LiveRemote(ControlSurface):
         def walk(item, depth):
             if depth > max_depth:
                 return None
+            if time.monotonic() > deadline:
+                raise ValueError("searched the browser for %d s without finding %r; find it with browse and give its "
+                                 "exact name, or add its folder under Places" % (seconds, name))
             for child in item.iter_children:
                 if child.is_loadable and match(child):
                     return child
