@@ -395,3 +395,25 @@ test("deleting a rack together with a device inside it deletes the rack once, wi
   assert.equal(r.data.deleted, "Audio Effect Rack");
   await c.close();
 });
+
+test("several tracks, devices or arrangement clips in a row are deleted as asked, not their neighbours", async () => {
+  const c = await client();
+  const ids = [];
+  for (const name of ["A", "B", "C", "D"]) ids.push((await call(c, "create_track", { kind: "midi", name })).data.id);
+  const tracks = await call(c, "delete_track", { tracks: [ids[0], ids[2]] });
+  assert.deepEqual(tracks.data.deleted, ["A", "C"]);
+  const left = (await call(c, "get_set")).data.tracks.map((t: { name: string }) => t.name);
+  assert.ok(left.includes("B") && left.includes("D") && !left.includes("A") && !left.includes("C"), left.join(", "));
+
+  const devices = [];
+  for (let i = 0; i < 3; i++) devices.push((await call(c, "insert_device", { into: ids[1], device: ["Reverb", "Utility", "Operator"][i] })).data.id);
+  assert.deepEqual((await call(c, "delete_device", { devices: [devices[0], devices[1]] })).data.deleted, ["Reverb", "Utility"]);
+  assert.deepEqual((await call(c, "get_set")).data.tracks.find((t: { name: string }) => t.name === "B").devices.map((d: { name: string }) => d.name), ["Operator"]);
+
+  const clips = [];
+  for (const [i, name] of ["X", "Y", "Z"].entries()) clips.push((await call(c, "create_clip", { track: ids[1], start: i * 4, length: 4, name })).data.id);
+  assert.deepEqual((await call(c, "delete_clip", { clips: [clips[0], clips[1]] })).data.deleted, ["X", "Y"]);
+  const b = (await call(c, "get_set")).data.tracks.findIndex((t: { name: string }) => t.name === "B");
+  assert.deepEqual((await call(c, "get_clips", { track: `t${b}` })).data.arrangement.map((x: { name: string }) => x.name), ["Z"]);
+  await c.close();
+});

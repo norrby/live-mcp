@@ -409,7 +409,10 @@ export class LiveAdapter {
     const ids = new Set<string>();
     const distinct = found.filter((f) => !ids.has(this.id(f.clip)) && ids.add(this.id(f.clip)));
     const names = distinct.map((f) => f.clip.name);
-    await this.context.withinTransaction(() => Promise.all(distinct.map((f) => (f.slot ? f.slot.deleteClip() : f.track.deleteClip(f.clip)))));
+    // Live deletes an arrangement clip at the position it had when the delete was sent, so later clips go first.
+    const position = (f: (typeof distinct)[number]) => (f.slot ? -1 : f.track.arrangementClips.indexOf(f.clip));
+    const lastFirst = [...distinct].sort((a, b) => position(b) - position(a));
+    await this.context.withinTransaction(() => Promise.all(lastFirst.map((f) => (f.slot ? f.slot.deleteClip() : f.track.deleteClip(f.clip)))));
     return names;
   }
 

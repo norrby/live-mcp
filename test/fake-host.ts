@@ -52,6 +52,15 @@ export class FakeLive {
     if (!o || o.deleted) throw new TypeError("Invalid object reference");
     return o;
   }
+  /** Removes whatever is at id's position in list now, a moment later: a delete sent before it may shift that position. */
+  private deleteAt(list: Id[], id: Id, ok: () => void): void {
+    const i = list.indexOf(id);
+    setImmediate(() => {
+      const [gone] = list.splice(i, 1);
+      this.get(gone).deleted = true;
+      ok();
+    });
+  }
   private addTrackObject(cls: string, name: string, parent: Id): Id {
     const id = this.add(cls, parent, { name, mute: false, solo: false, arm: false, devices: [] as Id[], slots: [] as Id[], arrangement: [] as Id[] });
     for (let i = 0; i < 2; i++) (this.get(id).slots as Id[]).push(this.add("ClipSlot", id, { clip: null }));
@@ -140,12 +149,9 @@ export class FakeLive {
       songGetScenes: () => self.handles(self.get(self.song).scenes as Id[]),
       songCreateMidiTrack: (_s: Handle, ok: (x: Handle) => void) => ok(h(self.addTrack("midi", `${(self.get(self.song).tracks as Id[]).length + 1}-MIDI`))),
       songCreateAudioTrack: (_s: Handle, ok: (x: Handle) => void) => ok(h(self.addTrack("audio", `${(self.get(self.song).tracks as Id[]).length + 1}-Audio`))),
-      songDeleteTrack: (_s: Handle, t: Handle, ok: () => void) => {
-        const song = self.get(self.song);
-        song.tracks = (song.tracks as Id[]).filter((x) => x !== t.id);
-        self.get(t.id).deleted = true;
-        ok();
-      },
+      // Like Live, the deletes below find their object's position when they are called and delete at that position
+      // a moment later, so deletes sent together must not shift each other.
+      songDeleteTrack: (_s: Handle, t: Handle, ok: () => void) => self.deleteAt(self.get(self.song).tracks as Id[], t.id, ok),
       trackGetName: (t: Handle) => self.get(t.id).name,
       trackSetName: (t: Handle, v: string) => void (self.get(t.id).name = v),
       trackGetMute: (t: Handle) => self.get(t.id).mute,
@@ -203,12 +209,7 @@ export class FakeLive {
         (self.get(t.id).arrangement as Id[]).push(id);
         ok(h(id));
       },
-      trackDeleteClip: (t: Handle, c: Handle, ok: () => void) => {
-        const tr = self.get(t.id);
-        tr.arrangement = (tr.arrangement as Id[]).filter((x) => x !== c.id);
-        self.get(c.id).deleted = true;
-        ok();
-      },
+      trackDeleteClip: (t: Handle, c: Handle, ok: () => void) => self.deleteAt(self.get(t.id).arrangement as Id[], c.id, ok),
       trackGetDevices: (t: Handle) => self.handles(self.get(t.id).devices as Id[]),
       trackGetMixerDevice: (t: Handle) => h(self.get(t.id).mixer as Id),
       trackInsertDevice: (t: Handle, name: string, index: bigint, ok: (x: Handle) => void, err: () => void) => {
@@ -219,12 +220,7 @@ export class FakeLive {
         list.splice(Number(index), 0, id);
         ok(h(id));
       },
-      trackDeleteDevice: (t: Handle, d: Handle, ok: () => void) => {
-        const tr = self.get(t.id);
-        tr.devices = (tr.devices as Id[]).filter((x) => x !== d.id);
-        self.get(d.id).deleted = true;
-        ok();
-      },
+      trackDeleteDevice: (t: Handle, d: Handle, ok: () => void) => self.deleteAt(self.get(t.id).devices as Id[], d.id, ok),
       chainGetDevices: (c: Handle) => self.handles(self.get(c.id).devices as Id[]),
       chainGetMixerDevice: (c: Handle) => h(self.get(c.id).mixer as Id),
       rackdeviceGetChains: (d: Handle) => self.handles(self.get(d.id).chains as Id[]),

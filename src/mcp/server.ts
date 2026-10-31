@@ -132,6 +132,11 @@ export function createServer(deps: ServerDeps): McpServer {
 
   /** Starts every step synchronously inside one transaction, so Live keeps them as one undo step. */
   const inOneStep = (steps: (() => Promise<unknown>)[]) => live.context.withinTransaction(() => Promise.all(steps.map((step) => step())));
+  /**
+   * Live finds an object's position when a delete is sent and deletes at that position once the earlier deletes are
+   * done, so deletes sent together go last-first: none of them then shifts the one after it.
+   */
+  const lastFirst = <T>(items: T[], position: (item: T) => number) => [...items].sort((a, b) => position(b) - position(a));
 
   /**
    * A Max for Live author can mark a parameter "[ask first]" (a Pull, Push or Store action, say). Changing it to
@@ -414,7 +419,7 @@ export function createServer(deps: ServerDeps): McpServer {
       const ids = new Set(all.map((f) => live.id(f.device)));
       const found = all.filter((f) => !live.deviceAncestors(f.device).some((d) => ids.has(live.id(d))));
       const deleted = found.map((f) => f.device.name);
-      await inOneStep(found.map((f) => () => f.holder.deleteDevice(f.device)));
+      await inOneStep(lastFirst(found, (f) => f.index).map((f) => () => f.holder.deleteDevice(f.device)));
       return { deleted: deleted.length === 1 ? deleted[0] : deleted };
     }),
   );
@@ -444,7 +449,7 @@ export function createServer(deps: ServerDeps): McpServer {
       const remaining = live.song.tracks.filter((t) => !found.includes(t) && !live.groupAncestors(t).some((g) => found.includes(g)));
       if (found.some((t) => live.song.tracks.includes(t)) && remaining.length === 0) throw new LiveError("Nothing was deleted: a set keeps at least one track");
       const deleted = found.map((t) => t.name);
-      await inOneStep(found.map((t) => () => live.song.deleteTrack(t)));
+      await inOneStep(lastFirst(found, (t) => live.song.tracks.indexOf(t)).map((t) => () => live.song.deleteTrack(t)));
       return { deleted: deleted.length === 1 ? deleted[0] : deleted };
     }),
   );
