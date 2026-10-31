@@ -55,7 +55,8 @@ test("record names its tracks to the bridge, and stop reports what the take adde
 
   assert.match((await call("transport", { action: "record" })).data, /record needs tracks/);
   assert.match((await call("transport", { action: "record", tracks: ["r0"] })).data, /only MIDI and audio tracks/);
-  assert.match((await call("transport", { action: "play", tracks: ["t0"] })).data, /with action record only/);
+  assert.match((await call("transport", { action: "play", tracks: ["t0"] })).data, /tracks go with action record only/);
+  assert.match((await call("transport", { action: "stop", start: 4 })).data, /start goes with action play or record only/);
 
   const started = await call("transport", { action: "record", tracks: ["t0"], start: 64 });
   assert.ok(started.ok, JSON.stringify(started.data));

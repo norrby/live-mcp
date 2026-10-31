@@ -541,13 +541,14 @@ export function createServer(deps: ServerDeps): McpServer {
       inputSchema: {
         action: z.enum(["play", "stop", "continue", "stop_all_clips", "record", "record_off", "metronome_on", "metronome_off", "loop_on", "loop_off", "back_to_arrangement"]).optional(),
         tracks: z.array(address).optional().describe("record only: the tracks to record on, all of them; required with record"),
-        start: z.number().min(0).optional().describe("record only: where the take starts, in beats; default Live's start marker, where play would start now"),
+        start: z.number().min(0).optional().describe("play and record: where to start, in beats (Live's start marker is put there); default the start marker as it is, where the user last clicked"),
       },
     },
     guarded(async ({ action, tracks, start }) => {
       if (action !== "record") {
-        if (tracks || start !== undefined) throw new LiveError("tracks and start go with action record only");
-        const status = await bridge.call<Record<string, unknown>>("transport", [], action ? { action } : {});
+        if (tracks) throw new LiveError("tracks go with action record only");
+        if (start !== undefined && action !== "play") throw new LiveError("start goes with action play or record only");
+        const status = await bridge.call<Record<string, unknown>>("transport", [], action ? { action, ...(start !== undefined ? { start } : {}) } : {});
         if (!takes.has(live)) return status;
         // A take the user stopped in Live's window ends here, so its report does not take in clips made afterwards.
         const endedInLive = !action && status.record_mode === false && status.is_playing === false;

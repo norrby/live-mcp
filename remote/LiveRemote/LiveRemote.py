@@ -516,6 +516,17 @@ class LiveRemote(ControlSurface):
                 warnings.append("%s monitors In, so its own clips are silent" % t.name)
         return warnings
 
+    def _set_start(self, start):
+        """Put the start marker, where play starts, at start (beats), or change nothing and say why."""
+        song = self.song()
+        before = song.start_time
+        song.start_time = float(start)
+        if abs(song.start_time - float(start)) > 1e-6:
+            kept = song.start_time
+            song.start_time = before
+            raise ValueError("Not started, nothing changed: Live keeps the start at %s, not %s (a loop or locator "
+                             "decides it); turn the loop off or ask the user." % (kept, start))
+
     def cmd_record(self, tracks, start=None):
         """Arrangement recording, checked and started in one go on Live's main thread, so nothing can change in between:
         the tracks that would record must be exactly 'tracks' (indices into song.tracks), else nothing happens. Puts
@@ -545,13 +556,7 @@ class LiveRemote(ControlSurface):
                              "(set_track arm), and if a MIDI track records only because it is selected, ask the user to "
                              "select another track or arm one; do not change the user's selection yourself.")
         if start is not None:
-            before = song.start_time
-            song.start_time = float(start)
-            if abs(song.start_time - float(start)) > 1e-6:
-                kept = song.start_time
-                song.start_time = before
-                raise ValueError("Not started, nothing changed: Live keeps the start at %s, not %s (a loop or locator "
-                                 "decides it); turn the loop off or ask the user." % (kept, start))
+            self._set_start(start)
         at = song.start_time
         warnings = self._record_warnings(wanted, at)
         song.record_mode = True
@@ -895,14 +900,18 @@ class LiveRemote(ControlSurface):
         return row
 
     # -- transport, selection, scenes and clips (for the live-mcp bridge; the Extensions SDK has none of these) --
-    def cmd_transport(self, action=None):
+    def cmd_transport(self, action=None, start=None):
         """Transport status, or run an action first: play | stop | continue | stop_all_clips | record_off |
         metronome_on | metronome_off | loop_on | loop_off | back_to_arrangement. Recording starts only through record,
-        which checks which tracks would record."""
+        which checks which tracks would record. start (beats, play only) puts the start marker there first."""
         song = self.song()
+        if start is not None and action != "play":
+            raise ValueError("start goes with play (or record) only")
         if action is not None:
             action = str(action)
             if action == "play":
+                if start is not None:
+                    self._set_start(start)
                 song.start_playing()
             elif action == "stop":
                 song.stop_playing()
