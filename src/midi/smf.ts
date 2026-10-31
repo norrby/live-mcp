@@ -59,12 +59,14 @@ export function parseMidi(buf: Buffer): MidiFile {
   let timeSignature: [number, number] | undefined;
   const raw: { name: string; notes: (MidiNote & { channel: number })[] }[] = [];
 
-  for (let t = 0; t < tracks && at + 8 <= buf.length; t++) {
+  // Other chunks (some files carry their own before the tracks) are skipped and do not count as tracks.
+  for (let t = 0; t < tracks && at + 8 <= buf.length; ) {
     const id = buf.toString("latin1", at, at + 4);
     const length = buf.readUInt32BE(at + 4);
     const body = buf.subarray(at + 8, at + 8 + length);
     at += 8 + length;
     if (id !== "MTrk") continue;
+    t++;
     const r = new Reader(body);
     let tick = 0;
     let status = 0;
