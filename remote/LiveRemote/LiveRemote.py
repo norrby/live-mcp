@@ -474,9 +474,9 @@ class LiveRemote(ControlSurface):
         song, warnings = self.song(), []
         for i in indices:
             t = song.tracks[i]
-            later = [c.name or "unnamed" for c in t.arrangement_clips if c.end_time > start]
+            later = ["%s at %s" % (c.name or "unnamed", round(max(c.start_time, start), 3)) for c in t.arrangement_clips if c.end_time > start]
             if later:
-                warnings.append("%s has clips from %s on that the take replaces as it goes: %s" % (t.name, start, ", ".join(later)))
+                warnings.append("%s: the take replaces these clips from where it reaches them: %s" % (t.name, ", ".join(later)))
         for i, t in enumerate(song.tracks):
             if t.can_be_armed and t.has_midi_input and t.current_monitoring_state == 0 and len(t.arrangement_clips):
                 warnings.append("%s monitors In, so its own clips are silent" % t.name)
@@ -484,8 +484,9 @@ class LiveRemote(ControlSurface):
 
     def cmd_record(self, tracks, start=None):
         """Arrangement recording, checked and started in one go on Live's main thread, so nothing can change in between:
-        the tracks that would record must be exactly 'tracks' (indices into song.tracks), else nothing happens. Moves
-        the playhead to start (beats) if given, turns the record button on and plays from there."""
+        the tracks that would record must be exactly 'tracks' (indices into song.tracks), else nothing happens. Puts
+        the start marker at start (beats) if given, turns the record button on and plays from the start marker, which
+        is where Live's own play starts too (not current_song_time: setting that while stopped does not move play)."""
         song = self.song()
         if song.record_mode:
             raise ValueError("Not started: Live is already recording. Stop first.")
@@ -507,11 +508,17 @@ class LiveRemote(ControlSurface):
                              "(set_track arm), and if a MIDI track records only because it is selected, ask the user to "
                              "select another track or arm one; do not change the user's selection yourself.")
         if start is not None:
-            song.current_song_time = float(start)
-        at = song.current_song_time
+            before = song.start_time
+            song.start_time = float(start)
+            if abs(song.start_time - float(start)) > 1e-6:
+                kept = song.start_time
+                song.start_time = before
+                raise ValueError("Not started, nothing changed: Live keeps the start at %s, not %s (a loop or locator "
+                                 "decides it); turn the loop off or ask the user." % (kept, start))
+        at = song.start_time
         warnings = self._record_warnings(wanted, at)
         song.record_mode = True
-        song.continue_playing()
+        song.start_playing()
         return {"recording": [song.tracks[i].name for i in wanted], "start": at, "warnings": warnings}
 
     def cmd_devices(self, track):
