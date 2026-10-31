@@ -648,8 +648,8 @@ class LiveRemote(ControlSurface):
                 return label, hit
         return None, None
 
-    def cmd_browser(self, path=""):
-        """List the browser roots, or the children of 'root/sub/folder'."""
+    def cmd_browser(self, path="", offset=0, limit=200):
+        """List the browser roots, or the children of 'root/sub/folder', limit at a time from offset."""
         if not path:
             return [label for label, _ in self._browser_roots()]
         parts = str(path).split("/")
@@ -667,7 +667,12 @@ class LiveRemote(ControlSurface):
             if not nxt:
                 raise ValueError("not found: %r" % p)
             node = nxt[0]
-        return [{"name": c.name, "loadable": c.is_loadable, "device": c.is_device, "folder": c.is_folder} for c in node.iter_children]
+        children = list(node.iter_children)
+        offset, limit = max(0, int(offset)), max(1, int(limit))
+        page = [{"name": c.name, "loadable": c.is_loadable, "device": c.is_device, "folder": c.is_folder}
+                for c in children[offset:offset + limit]]
+        return {"items": page, "offset": offset, "total": len(children),
+                "more": offset + len(page) < len(children)}
 
     def cmd_add_device(self, track, name):
         """Load a device (stock name or file name under Places) onto the track,
