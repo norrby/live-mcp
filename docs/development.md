@@ -124,6 +124,10 @@ Live MCP reads three things from your `.amxd` file and passes them to the assist
   it is ready to be driven: once it has taken the values Live restores and anything it sets up itself. A program
   that loads the device then waits for it instead of guessing a time. Without one, Live MCP waits a fixed few seconds
   after loading a Max for Live device, which is either too long or, for a slow device, too short.
+- **Write nothing at load.** Every parameter or bank your patch sets while it loads becomes an undo step in Live, even
+  when the value does not change. A user, or `undo`, then needs that many steps before the loading of the device
+  itself is undone. Build the device in the state it starts in, so that loading leaves the undo history alone, apart
+  from the `[ready]` flag.
 
 These are plain text conventions, so any program can follow them; we hope others will.
 
