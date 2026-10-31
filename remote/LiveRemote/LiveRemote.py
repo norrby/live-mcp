@@ -33,6 +33,7 @@ from _Framework.ControlSurface import ControlSurface
 
 HOST, PORT = "127.0.0.1", 9870
 MAIN_THREAD_TIMEOUT = 20.0
+MAX_REQUEST_BYTES = 16 * 1024 * 1024
 TOKEN_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".liveremote-token")
 
 
@@ -178,7 +179,10 @@ class LiveRemote(ControlSurface):
         with conn:
             conn.settimeout(60)
             f = conn.makefile("rwb")
-            for line in f:
+            while True:
+                line = f.readline(MAX_REQUEST_BYTES)
+                if not line.endswith(b"\n"):
+                    break  # closed, or a line longer than any request: hang up rather than keep reading
                 try:
                     req = json.loads(line.decode("utf-8"))
                 except Exception:
@@ -288,6 +292,7 @@ class LiveRemote(ControlSurface):
         import sys
         mod = importlib.reload(sys.modules[self.__class__.__module__])
         self.__class__ = mod.LiveRemote
+        self._token = mod.load_token()  # a token file added or removed since start counts from now
         self.log_message("LiveRemote: reloaded")
         return "reloaded"
 
