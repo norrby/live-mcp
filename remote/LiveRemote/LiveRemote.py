@@ -84,8 +84,13 @@ def amxd_list(dirs):
     return found
 
 
+def _real(path):
+    """The file a path really names, links followed, so that a check on its ending is a check on what gets read."""
+    return os.path.realpath(os.path.expanduser(str(path)))
+
+
 def _read_b64(path, endings, what):
-    path = os.path.expanduser(str(path))
+    path = _real(path)
     if not path.lower().endswith(endings) or not os.path.isfile(path):
         raise ValueError("not %s: %r" % (what, path))
     if os.path.getsize(path) > AMXD_MAX_BYTES:
@@ -101,7 +106,7 @@ AUDIO_CHUNK_MAX = 8 * 1024 * 1024
 
 def audio_read(path, offset=0, size=AUDIO_CHUNK_MAX):
     """A piece of an audio file as base64, with the file's total size, so a large file comes over in several calls."""
-    path = os.path.expanduser(str(path))
+    path = _real(path)
     if not path.lower().endswith(AUDIO_ENDINGS) or not os.path.isfile(path):
         raise ValueError("not an audio file (%s): %r" % (", ".join(AUDIO_ENDINGS), path))
     total = os.path.getsize(path)
