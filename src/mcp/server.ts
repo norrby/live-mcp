@@ -507,7 +507,7 @@ export function createServer(deps: ServerDeps): McpServer {
   server.registerTool(
     "delete_track",
     {
-      description: "Delete one track (track) or several (tracks), as one undo step. Every address is checked first; if one is wrong, nothing is deleted.",
+      description: "Delete one track (track) or several (tracks), as one undo step. Every address is checked first; if one is wrong, nothing is deleted. Return tracks (r0, r1...) are deleted through the LiveRemote bridge, in a call of their own.",
       inputSchema: { track: address.optional(), tracks: z.array(address).optional() },
     },
     guarded(async ({ track, tracks }) => {
@@ -519,9 +519,14 @@ export function createServer(deps: ServerDeps): McpServer {
       const remaining = live.song.tracks.filter((t) => !found.includes(t) && !live.groupAncestors(t).some((g) => found.includes(g)));
       if (found.some((t) => live.song.tracks.includes(t)) && remaining.length === 0) throw new LiveError("Nothing was deleted: a set keeps at least one track");
       const deleted = found.map((t) => t.name);
-      // Return tracks have places of their own, after every regular track.
-      const position = (t: (typeof found)[number]) => (live.song.tracks.includes(t) ? live.song.tracks.indexOf(t) : 100_000 + live.song.returnTracks.indexOf(t));
-      await inOneStep(lastFirst(found, position).map((t) => () => live.song.deleteTrack(t)));
+      // The Extensions API deletes only regular tracks; return tracks go through the bridge, in a call of their own.
+      const returns = found.filter((t) => live.song.returnTracks.includes(t));
+      if (returns.length) {
+        if (returns.length < found.length) throw new LiveError("Nothing was deleted: delete return tracks in a call of their own, apart from other tracks");
+        await bridge.call("delete_return_tracks", [returns.map((t) => live.song.returnTracks.indexOf(t))]);
+        return { deleted: deleted.length === 1 ? deleted[0] : deleted };
+      }
+      await inOneStep(lastFirst(found, (t) => live.song.tracks.indexOf(t)).map((t) => () => live.song.deleteTrack(t)));
       return { deleted: deleted.length === 1 ? deleted[0] : deleted };
     }),
   );

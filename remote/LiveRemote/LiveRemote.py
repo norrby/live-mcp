@@ -581,6 +581,23 @@ class LiveRemote(ControlSurface):
             t.name = name
         return self._tracks_all().index(t)
 
+    def cmd_delete_return_tracks(self, indices):
+        """Delete return tracks by their index among the returns, last first and as one undo step; the Extensions API
+        cannot delete them."""
+        song = self.song()
+        wanted = sorted(set(int(i) for i in indices), reverse=True)
+        bad = [i for i in wanted if not 0 <= i < len(song.return_tracks)]
+        if bad:
+            raise ValueError("Nothing was deleted: no return track at %s" % bad)
+        names = [song.return_tracks[i].name for i in sorted(wanted)]
+        song.begin_undo_step()
+        try:
+            for i in wanted:
+                song.delete_return_track(i)
+        finally:
+            song.end_undo_step()
+        return names
+
     def cmd_create_audio_track(self, index=-1, name=None):
         t = self.song().create_audio_track(int(index))
         if name:
