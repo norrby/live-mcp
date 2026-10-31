@@ -903,6 +903,8 @@ class LiveRemote(ControlSurface):
                 raise ValueError("fire needs a scene or a track")
             song.scenes[int(scene)].fire()
             return {"fired": "scene", "scene": int(scene)}
+        if scene is not None:
+            raise ValueError("track and scene together are not a target: give track and clip, or scene alone")
         t = self._track(track)
         if clip is not None:
             t.clip_slots[int(clip)].fire()

@@ -923,6 +923,7 @@ export function createServer(deps: ServerDeps): McpServer {
       inputSchema: { track: address.optional(), clip: z.number().int().min(0).optional(), scene: z.number().int().min(0).optional() },
     },
     guarded(({ track, clip, scene }) => {
+      if (track && scene !== undefined) throw new LiveError("give track and clip (the slot index) to launch a clip, or scene alone to launch a scene; track and scene together are not a target");
       const kwargs: Record<string, unknown> = {};
       if (track) kwargs.track = bridgeTrackIndex(live, track);
       if (clip !== undefined) kwargs.clip = clip;
