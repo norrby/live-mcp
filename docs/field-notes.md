@@ -183,6 +183,30 @@ tracks, devices and clips.
 **Lesson.** "One undo step" and "one at a time" pull in different directions; find out what the host does between
 the two.
 
+### A review of all the code at once
+
+**What happened.** Earlier reviews had each read the changes since the one before. Once the server had grown and
+was in daily use, three reviewers read all of it at once, one for the server, one for the bridge and one for the
+tests and file parsers. Each finding was checked in the code before anything was changed. They found about thirty
+issues; the ones that mattered:
+
+- The `[ask first]` guard let changes through when the bridge answered but a read of the device files had failed
+  half way, the same blindness as in the first seconds after start, in another form. Changes to a device the server
+  cannot yet recognise now wait while the bridge answers.
+- A request that timed out still ran later on Live's main thread, unseen: a retried undo could undo twice. A request
+  Live has not begun when the wait runs out is now dropped.
+- The same device given twice, by position and by id, deleted its neighbour; the same parameter given twice was set
+  twice with a random winner. Both are now compared by the object, not the address.
+- `set_track` made one undo step per field and could rename a track before failing to arm it. `set_routing` could
+  change the input and then fail on the output. Both now check first and change in one step, or put things back.
+- A MIDI file with notes never released lost every other one; one with a chunk of its own before the tracks lost its
+  last track; one with very many notes overflowed the stack.
+- Smaller ones: `live://set` sent an unfinished promise as `{}`, `get_changes` mixed snapshots of different scopes,
+  a range shorter than 0.4 s was reported as silent, and "2 kHz" was read as 2 Hz.
+
+**Lesson.** Reviews of changes miss what lives between them. Every part of the half-done and identity bugs looked
+right on its own.
+
 ## And when it works
 
 Not every surprise was a bug. Asked for a bass whose low-pass filter opens with how hard each note is played, an
