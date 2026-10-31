@@ -896,8 +896,9 @@ class LiveRemote(ControlSurface):
 
     # -- transport, selection, scenes and clips (for the live-mcp bridge; the Extensions SDK has none of these) --
     def cmd_transport(self, action=None):
-        """Transport status, or run an action first: play | stop | continue | stop_all_clips | record_on | record_off |
-        metronome_on | metronome_off | loop_on | loop_off | back_to_arrangement."""
+        """Transport status, or run an action first: play | stop | continue | stop_all_clips | record_off |
+        metronome_on | metronome_off | loop_on | loop_off | back_to_arrangement. Recording starts only through record,
+        which checks which tracks would record."""
         song = self.song()
         if action is not None:
             action = str(action)
@@ -909,8 +910,8 @@ class LiveRemote(ControlSurface):
                 song.continue_playing()
             elif action == "stop_all_clips":
                 song.stop_all_clips()
-            elif action in ("record_on", "record_off"):
-                song.record_mode = action == "record_on"
+            elif action == "record_off":
+                song.record_mode = False
             elif action in ("metronome_on", "metronome_off"):
                 song.metronome = action == "metronome_on"
             elif action in ("loop_on", "loop_off"):
