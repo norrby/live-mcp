@@ -135,6 +135,8 @@ export function parseMidi(buf: Buffer): MidiFile {
     if (format === 0 && channels.length > 1) for (const c of channels) add(`${track.name || "Channel"} ${c + 1}`.trim(), track.notes.filter((n) => n.channel === c));
     else add(track.name || `Track ${raw.indexOf(track) + 1}`, track.notes);
   }
-  const lengthBeats = Math.max(0, ...parts.flatMap((p) => p.notes.map((n) => n.startTime + n.duration)));
+  // A loop, not Math.max(...notes): a file can hold more notes than a call can take arguments.
+  let lengthBeats = 0;
+  for (const p of parts) for (const n of p.notes) lengthBeats = Math.max(lengthBeats, n.startTime + n.duration);
   return { format, ticksPerBeat, bpm, timeSignature, parts, lengthBeats };
 }

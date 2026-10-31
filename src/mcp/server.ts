@@ -638,7 +638,7 @@ export function createServer(deps: ServerDeps): McpServer {
         if (e instanceof LiveError || e instanceof BridgeError) throw e;
         throw new LiveError(`${where}: ${(e as Error).message}`);
       }
-      const parts = midi.parts.map((p) => ({ index: p.index, name: p.name, channels: p.channels, notes: p.notes.length, pitches: p.notes.length ? [Math.min(...p.notes.map((n) => n.pitch)), Math.max(...p.notes.map((n) => n.pitch))] : [] }));
+      const parts = midi.parts.map((p) => ({ index: p.index, name: p.name, channels: p.channels, notes: p.notes.length, pitches: p.notes.length ? p.notes.reduce(([lo, hi], n) => [Math.min(lo, n.pitch), Math.max(hi, n.pitch)], [127, 0]) : [] }));
       const about = { file: where, bpm: midi.bpm, timeSignature: midi.timeSignature, lengthBeats: midi.lengthBeats, parts };
       if (!track) return about;
       if (!midi.parts.length) throw new LiveError(`${where} has no notes`);
@@ -649,7 +649,7 @@ export function createServer(deps: ServerDeps): McpServer {
       else if (midi.parts.length > 1) throw new LiveError(`${where} has ${midi.parts.length} parts (${midi.parts.map((p) => `${p.index} "${p.name}"`).join(", ")}): give part, or part "all"`);
       if (!chosen.length) throw new LiveError(`no part ${JSON.stringify(part)} in ${where}; parts: ${midi.parts.map((p) => `${p.index} "${p.name}"`).join(", ")}`);
       const notes = chosen.flatMap((p) => p.notes).map((n) => ({ ...n, velocity: Math.min(127, Math.max(1, n.velocity)) }));
-      const end = Math.max(...notes.map((n) => n.startTime + n.duration));
+      const end = notes.reduce((e, n) => Math.max(e, n.startTime + n.duration), 0);
       const bar = midi.timeSignature ? (midi.timeSignature[0] * 4) / midi.timeSignature[1] : 4;
       const clipLength = length ?? Math.max(bar, Math.ceil(end / bar - 1e-9) * bar);
       const { clip, address: a } = await live.createMidiClip(track, { slot, start, length: clipLength });
