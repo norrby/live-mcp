@@ -49,15 +49,17 @@ function build() {
 
 let host;
 function startHost() {
-  host = spawn(process.execPath, [path.join(project, "tools", "host.mjs")], { cwd: project, stdio: "inherit" });
-  host.on("exit", (code, signal) => {
-    if (signal !== "SIGTERM") say(`the host exited (${signal ?? code}); it starts again on the next change`);
-    host = undefined;
+  const h = spawn(process.execPath, [path.join(project, "tools", "host.mjs")], { cwd: project, stdio: "inherit" });
+  host = h;
+  h.on("exit", (code, signal) => {
+    if (!h.stopping) say(`the host exited (${signal ?? code}); it starts again on the next change`);
+    if (host === h) host = undefined;
   });
 }
 function stopHost() {
   if (!host) return Promise.resolve();
   const h = host;
+  h.stopping = true;
   return new Promise((resolve) => {
     h.once("exit", resolve);
     h.kill("SIGTERM");
