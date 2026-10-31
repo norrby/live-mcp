@@ -684,16 +684,25 @@ class LiveRemote(ControlSurface):
                 raise ValueError("%r matches %d options: %s" % (want, len(hits), names))
             return hits[0]
 
-        if input_type is not None:
-            t.input_routing_type = pick(t.available_input_routing_types, input_type)
-        if input_channel is not None:
-            t.input_routing_channel = pick(t.available_input_routing_channels, input_channel)
-        if output_type is not None:
-            t.output_routing_type = pick(t.available_output_routing_types, output_type)
-        if output_channel is not None:
-            t.output_routing_channel = pick(t.available_output_routing_channels, output_channel)
-        if monitor is not None:
-            t.current_monitoring_state = ["in", "auto", "off"].index(str(monitor).lower())
+        states = ["in", "auto", "off"]
+        if monitor is not None and str(monitor).lower() not in states:
+            raise ValueError("monitor is In, Auto or Off, not %r" % monitor)
+
+        def change():
+            if input_type is not None:
+                t.input_routing_type = pick(t.available_input_routing_types, input_type)
+            if input_channel is not None:
+                t.input_routing_channel = pick(t.available_input_routing_channels, input_channel)
+            if output_type is not None:
+                t.output_routing_type = pick(t.available_output_routing_types, output_type)
+            if output_channel is not None:
+                t.output_routing_channel = pick(t.available_output_routing_channels, output_channel)
+            if monitor is not None:
+                t.current_monitoring_state = states.index(str(monitor).lower())
+
+        # A channel can only be picked once its type is set, so a wrong channel shows up after the type has changed.
+        _all_or_nothing(t, ["input_routing_type", "input_routing_channel", "output_routing_type",
+                            "output_routing_channel"] + (["current_monitoring_state"] if t.can_be_armed else []), change)
         return {"input_type": self._dn(t.input_routing_type), "input_channel": self._dn(t.input_routing_channel),
                 "output_type": self._dn(t.output_routing_type), "output_channel": self._dn(t.output_routing_channel),
                 "monitor": ["In", "Auto", "Off"][t.current_monitoring_state] if t.can_be_armed else None}
@@ -735,10 +744,13 @@ class LiveRemote(ControlSurface):
                 raise ValueError("%r matches %d options: %s" % (want, len(hits), names))
             return hits[0]
 
-        if type is not None:
-            target.routing_type = pick(target.available_routing_types, type)
-        if channel is not None:
-            target.routing_channel = pick(target.available_routing_channels, channel)
+        def change():
+            if type is not None:
+                target.routing_type = pick(target.available_routing_types, type)
+            if channel is not None:
+                target.routing_channel = pick(target.available_routing_channels, channel)
+
+        _all_or_nothing(target, ["routing_type", "routing_channel"], change)
         return {"io": io, "index": int(index), "type": self._dn(target.routing_type), "channel": self._dn(target.routing_channel)}
 
     def cmd_param(self, track, device, param, value=None):
@@ -867,12 +879,18 @@ class LiveRemote(ControlSurface):
     def cmd_selection(self, track=None, device=None, scene=None):
         """The selected track (index in tracks + returns + master), device on it and scene; set any of them first."""
         song = self.song()
-        if track is not None:
-            song.view.selected_track = self._track(track)
+        # Find everything first, so that a wrong device or scene leaves the selection as it was.
+        t = self._track(track) if track is not None else song.view.selected_track
+        d = None
         if device is not None:
-            song.view.select_device(self._device(track if track is not None else song.view.selected_track.name, device))
-        if scene is not None:
-            song.view.selected_scene = song.scenes[int(scene)]
+            d = t.devices[int(device)] if not isinstance(device, str) else [x for x in t.devices if x.name == device][0]
+        sc = song.scenes[int(scene)] if scene is not None else None
+        if track is not None:
+            song.view.selected_track = t
+        if d is not None:
+            song.view.select_device(d)
+        if sc is not None:
+            song.view.selected_scene = sc
         tracks, scenes = self._tracks_all(), list(song.scenes)
         t, sc = song.view.selected_track, song.view.selected_scene
         dev = t.view.selected_device if t is not None else None
@@ -923,6 +941,21 @@ class LiveRemote(ControlSurface):
         if song.can_redo:
             song.redo()
         return {"can_undo": song.can_undo, "can_redo": song.can_redo}
+
+
+def _all_or_nothing(obj, attrs, change):
+    """Run change(); if it fails, put obj's attrs back as they were, in order, so a failed call changes nothing."""
+    before = [(a, getattr(obj, a)) for a in attrs]
+    try:
+        change()
+    except Exception as e:
+        for a, v in before:
+            try:
+                if getattr(obj, a) != v:
+                    setattr(obj, a, v)
+            except Exception:
+                pass
+        raise ValueError("Nothing changed: %s" % e)
 
 
 def _jsonable(v, depth=0):
