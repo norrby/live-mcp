@@ -112,18 +112,21 @@ such as `-6 dB`.
 
 ## For Max for Live authors
 
-Live MCP reads these things from your `.amxd` file, and from beside it, and passes them to the assistant:
+Live MCP reads these things from your `.amxd` file and passes them to the assistant:
 
 - **The Info View text** of each parameter, as its help.
 - **The patcher's description** (Patcher Inspector), as `about`. Say there how a program should drive the device:
   which parameter selects what others edit, what a button really does.
-- **A guide**, a Markdown file beside the `.amxd` file with the same name (`My Synth.amxd`, `My Synth.md`). The help
-  texts say what each control does; the guide says how the instrument behind them works: the signal path, what a
-  table or a page is, which settings only make sense together, what the instrument cannot do. Start with a `#` title
-  and a short introduction, then `##` sections with headings a reader can choose from, each short enough to read on
-  its own. The assistant sees the headings with the parameters and reads one section at a time with `device_guide`,
-  so it never carries the whole text. Write it in your own words for someone who knows synthesizers but not this
-  one, and name the parameters as Live shows them, so that the architecture leads to the control.
+- **A guide**, a Markdown file that travels inside the device. The help texts say what each control does; the guide
+  says how the instrument behind them works: the signal path, what a table or a page is, which settings only make
+  sense together, what the instrument cannot do. Name the file in the description, for example "The guide to the
+  synth is embedded in the device as device-guide.md.", and make it one of the files the patcher depends on, so
+  that freezing embeds it with the scripts; an unfrozen device has it beside the `.amxd` file.
+  Start the file with a `#` title and a short introduction, then `##` sections with headings a reader can choose
+  from, each short enough to read on its own. The assistant sees the headings with the parameters and reads one
+  section at a time with `device_guide`, so it never carries the whole text. Write it in your own words for someone
+  who knows synthesizers but not this one, and name the parameters as Live shows them, so that the architecture
+  leads to the control.
 - **`[ask first]`** at the end of a parameter's Info View text marks it as changed only when the user asks.
   Live MCP refuses to change it from its default otherwise.
 - **`[ready]`** at the end of a parameter's Info View text marks the parameter that says the device has set itself
