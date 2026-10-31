@@ -203,6 +203,7 @@ export class FakeLive {
       },
       audioclipGetFilePath: (c: Handle) => self.get(c.id).file,
       audioclipGetWarping: (c: Handle) => self.get(c.id).warped !== false,
+      audioclipGetWarpMarkers: () => [],
       trackGetArrangementClips: (t: Handle) => self.handles(self.get(t.id).arrangement as Id[]),
       trackCreateMidiClip: (t: Handle, start: number, duration: number, ok: (x: Handle) => void) => {
         const id = self.add("MidiClip", t.id, { name: "", duration, looping: false, muted: false, notes: [], start });
@@ -291,8 +292,12 @@ export class FakeLive {
         },
         importIntoProject(filePath: string, ok: (p: string) => void, fail: (e: string) => void) {
           imports.push({ path: filePath, bytes: fs.existsSync(filePath) ? fs.readFileSync(filePath) : undefined });
-          if (filePath.includes("missing")) fail(`no such file: ${filePath}`);
-          else ok(`/project/Samples/Imported/${filePath.split("/").pop()}`);
+          if (filePath.includes("missing")) return fail(`no such file: ${filePath}`);
+          // A file that exists is copied, as Live copies it into the project; a made-up one gets a made-up path.
+          if (!fs.existsSync(filePath)) return ok(`/project/Samples/Imported/${filePath.split("/").pop()}`);
+          const copy = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "fake-project-")), path.basename(filePath));
+          fs.copyFileSync(filePath, copy);
+          ok(copy);
         },
       },
       ui: {},

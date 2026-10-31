@@ -440,3 +440,39 @@ test("a device given twice, by position and by id, is deleted once and its neigh
   assert.ok((await call(c, "get_set")).data.tracks.some((x: { name: string }) => x.name === "Twice"), "nothing was deleted");
   await c.close();
 });
+
+test("measure_audio reads a clip's own file cut at its markers, with windows, dominant frequency and onsets", async () => {
+  const c = await client();
+  const rate = 8000, frames = rate * 2; // 0.5 s of silence, then 440 Hz at half scale
+  const data = Buffer.alloc(frames * 2);
+  for (let i = rate / 2; i < frames; i++) data.writeInt16LE(Math.round(16383 * Math.sin((2 * Math.PI * 440 * i) / rate)), i * 2);
+  const fmt = Buffer.alloc(16);
+  fmt.writeUInt16LE(1, 0); fmt.writeUInt16LE(1, 2); fmt.writeUInt32LE(rate, 4); fmt.writeUInt32LE(rate * 2, 8); fmt.writeUInt16LE(2, 12); fmt.writeUInt16LE(16, 14);
+  const chunk = (id: string, body: Buffer) => { const h = Buffer.alloc(8); h.write(id, 0, "latin1"); h.writeUInt32LE(body.length, 4); return Buffer.concat([h, body]); };
+  const wave = Buffer.concat([Buffer.from("WAVE", "latin1"), chunk("fmt ", fmt), chunk("data", data)]);
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "live-mcp-tone-")), "tone.wav");
+  fs.writeFileSync(file, Buffer.concat([chunk("RIFF", wave).subarray(0, 8), wave]));
+
+  const created = await call(c, "create_audio_clip", { track: "t1", slot: 0, file, warped: false });
+  assert.ok(created.ok, String(created.data));
+  assert.ok(fs.existsSync(created.data.file), "the fake copied the file like Live does");
+  const m = await call(c, "measure_audio", { clip: "t1/s0", windowMs: 500, hzRange: [100, 2000], onsetDbfs: -30 });
+  assert.ok(m.ok, String(m.data));
+  assert.equal(m.data.clip, "t1/s0");
+  assert.equal(m.data.seconds, 2, "the clip's end marker lies past the file's end, so the file's end is the cut");
+  assert.deepEqual(m.data.peakDbfs, [-6]);
+  assert.deepEqual(m.data.windows.columns, ["seconds", "peakDbfs", "rmsDbfs", "hz"]);
+  assert.equal(m.data.windows.rows.length, 4);
+  assert.equal(m.data.windows.rows[0][3], null);
+  assert.ok(Math.abs(m.data.windows.rows[1][3] - 440) < 0.1, `hz ${m.data.windows.rows[1][3]}`);
+  assert.deepEqual(m.data.onsets, [0.5]);
+  const plain = await call(c, "measure_audio", { clip: "t1/s0" });
+  assert.equal(plain.data.windows, undefined, "no windows unless asked");
+  assert.equal(plain.data.onsets, undefined);
+  assert.match((await call(c, "measure_audio", { clip: "t0/s1" })).data, /not an audio clip/);
+  assert.match((await call(c, "measure_audio", { clip: "t1/s0", track: "t1", start: 0, end: 4 })).data, /track .* or .*clip/);
+  assert.match((await call(c, "measure_audio", { track: "t1", start: 0, end: 4, windowMs: 0.1 })).data, /at most 1000/);
+  assert.match((await call(c, "measure_audio", {})).data, /track .* or .*clip/);
+  await call(c, "delete_clip", { clip: "t1/s0" });
+  await c.close();
+});

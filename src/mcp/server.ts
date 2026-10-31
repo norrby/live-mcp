@@ -2,16 +2,16 @@
 // One instance per HTTP request (stateless), so everything here must be cheap to construct.
 import * as path from "node:path";
 import * as fs from "node:fs";
-import { measure, parseAudio } from "../audio/analyse.js";
+import { measure, onsets, parseAudio, windows, type Audio } from "../audio/analyse.js";
 import { parseMidi } from "../midi/smf.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { LiveAdapter, LiveError, type ParameterInfo, type TrackInfo, type V } from "../live/adapter.js";
+import { LiveAdapter, LiveError, secondsAtBeat, type ParameterInfo, type TrackInfo, type V } from "../live/adapter.js";
 import { explain } from "../live/errors.js";
 import { ChangeTracker } from "../live/changes.js";
 import { M4lRegistry, isForbidden } from "../m4l/registry.js";
 import type { M4lDevice, M4lParameter } from "../m4l/amxd.js";
-import { AudioTrack, Device, MidiTrack, Track } from "@ableton-extensions/sdk";
+import { AudioClip, AudioTrack, Device, MidiTrack, Track } from "@ableton-extensions/sdk";
 import { Bridge, BridgeError } from "../bridge/client.js";
 import { capabilities } from "./capabilities.js";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
@@ -781,6 +781,37 @@ export function createServer(deps: ServerDeps): McpServer {
     }),
   );
 
+  /** Whether the installed extension may read a file itself: only under its own folders. */
+  const ownFile = (file: string) => !deps.ownFolders || deps.ownFolders.some((d) => !path.relative(d, file).startsWith(".."));
+  /** Reads a file through the bridge's audio_read, piece by piece, into `sink`; `limit` stops a file too large to want. */
+  const bridgeRead = async (file: string, sink: (bytes: Buffer) => void, limit = Infinity): Promise<void> => {
+    for (let offset = 0, total = Infinity; offset < total; ) {
+      const piece = await bridge.call<{ total: number; data: string }>("audio_read", [file, offset]);
+      if (piece.total > limit) throw new LiveError(`${file} is larger than ${Math.round(limit / 1024 / 1024)} MB`);
+      const bytes = Buffer.from(piece.data, "base64");
+      if (!bytes.length && offset < piece.total) throw new LiveError(`${file} ended early`);
+      sink(bytes);
+      offset += bytes.length;
+      total = piece.total;
+    }
+  };
+  /** Why a bridge read failed, with a hint when the bridge is too old to know audio_read. */
+  const bridgeReadFailure = (e: BridgeError) => e.message + (e.message.includes("unknown command") ? " (this LiveRemote is older than the server; install the LiveRemote that came with it)" : "");
+  /** A whole file: read directly when allowed, otherwise through the bridge; `limit` refuses one too large to hold. */
+  const readFile = async (file: string, limit: number): Promise<Buffer> => {
+    if (ownFile(file)) {
+      if (fs.statSync(file).size > limit) throw new LiveError(`${file} is larger than ${Math.round(limit / 1024 / 1024)} MB`);
+      return fs.readFileSync(file);
+    }
+    const pieces: Buffer[] = [];
+    try {
+      await bridgeRead(file, (bytes) => pieces.push(bytes), limit);
+    } catch (e) {
+      if (e instanceof BridgeError) throw new LiveError(`Live MCP reads files outside its own folder through the LiveRemote bridge, and that failed for ${file}: ${bridgeReadFailure(e)}`);
+      throw e;
+    }
+    return Buffer.concat(pieces);
+  };
   /**
    * Live imports audio only from the installed extension's own folders, and the extension may not read files elsewhere,
    * so a file from anywhere else comes over through the bridge into a folder of its own under the temp folder (the
@@ -789,29 +820,19 @@ export function createServer(deps: ServerDeps): McpServer {
    */
   const stageAudio = async (file: string): Promise<string | undefined> => {
     const [temp] = deps.ownFolders ?? [];
-    if (!temp || !path.isAbsolute(file) || deps.ownFolders!.some((d) => !path.relative(d, file).startsWith(".."))) return undefined;
+    if (!temp || !path.isAbsolute(file) || ownFile(file)) return undefined;
     const dir = fs.mkdtempSync(path.join(temp, "import-"));
     const copy = path.join(dir, path.basename(file));
     try {
       const out = fs.openSync(copy, "w");
       try {
-        for (let offset = 0, total = Infinity; offset < total; ) {
-          const piece = await bridge.call<{ total: number; data: string }>("audio_read", [file, offset]);
-          const bytes = Buffer.from(piece.data, "base64");
-          if (!bytes.length && offset < piece.total) throw new LiveError(`${file} ended early`);
-          fs.writeSync(out, bytes);
-          offset += bytes.length;
-          total = piece.total;
-        }
+        await bridgeRead(file, (bytes) => fs.writeSync(out, bytes));
       } finally {
         fs.closeSync(out);
       }
     } catch (e) {
       fs.rmSync(dir, { recursive: true, force: true });
-      if (e instanceof BridgeError) {
-        const old = e.message.includes("unknown command") ? " (this LiveRemote is older than the server; install the LiveRemote that came with it)" : "";
-        throw new LiveError(`Live imports audio only from Live MCP's own folder, so the LiveRemote bridge copies ${file} there first, and that failed: ${e.message}${old}`);
-      }
+      if (e instanceof BridgeError) throw new LiveError(`Live imports audio only from Live MCP's own folder, so the LiveRemote bridge copies ${file} there first, and that failed: ${bridgeReadFailure(e)}`);
       throw e;
     }
     return copy;
@@ -895,11 +916,53 @@ export function createServer(deps: ServerDeps): McpServer {
     "measure_audio",
     {
       description:
-        "Render part of an audio track's arrangement and measure it: sample peak and RMS per channel in dBFS, integrated loudness in LUFS (ITU-R BS.1770), clipped samples, whether it is silent, and a coarse loudness curve (32 slices, dBFS). Live renders the audio of the track's clips before its effects; MIDI tracks, effects and the master cannot be rendered by any API. start and end are in beats.",
-      inputSchema: { track: address, start: z.number().min(0).describe("Beats"), end: z.number().positive().describe("Beats; at most 5 minutes after start") },
+        "Measure audio, since you cannot listen: sample peak and RMS per channel in dBFS, integrated loudness in LUFS (ITU-R BS.1770), clipped samples, whether it is silent, and a coarse loudness curve (32 slices, dBFS). Two sources: track with start and end (beats) renders that part of an audio track's arrangement, the audio of its clips before its effects (MIDI tracks, effects and the master cannot be rendered by any API, and session clips are not in the arrangement); clip reads an audio clip's own file (session or arrangement) between its start and end markers, before warping, gain and effects. windowMs adds peak and RMS per window (at most 1000 rows); hzRange adds the dominant frequency of each window within that range in Hz (a 1000 ms window resolves to about 0.01 Hz, a 10 ms one to a few Hz; windowMs defaults to 1000 with it); onsetDbfs lists the seconds at which the signal rises to that RMS level after having been below it (the start counts as below), measured over 10 ms.",
+      inputSchema: {
+        track: address.optional(),
+        start: z.number().min(0).optional().describe("Beats, with track"),
+        end: z.number().positive().optional().describe("Beats, with track; at most 5 minutes after start"),
+        clip: address.optional().describe('An audio clip, like "t1/s0", "t1/a2" or "#id"; instead of track'),
+        windowMs: z.number().positive().optional().describe("Peak and RMS per window of this many milliseconds"),
+        hzRange: z.tuple([z.number().min(0), z.number().positive()]).optional().describe("[min, max] Hz: the dominant frequency per window inside this range"),
+        onsetDbfs: z.number().max(0).optional().describe("RMS level in dBFS above which a rise after silence counts as an onset"),
+      },
     },
-    guarded(async ({ track, start, end }) => {
-      const t = live.track(track);
+    guarded(async ({ track, start, end, clip, windowMs, hzRange, onsetDbfs }) => {
+      if ((track === undefined) === (clip === undefined)) throw new LiveError("give track with start and end, or clip, not both");
+      if (hzRange && hzRange[1] <= hzRange[0]) throw new LiveError("hzRange is [min, max] with max above min");
+      const ms = windowMs ?? (hzRange ? 1000 : undefined);
+      const extra = (audio: Audio) => ({
+        ...(ms !== undefined ? { windows: windows(audio, ms, hzRange ? { min: hzRange[0], max: hzRange[1] } : undefined) } : {}),
+        ...(onsetDbfs !== undefined ? { onsets: onsets(audio, onsetDbfs) } : {}),
+      });
+      const tooLarge = 200 * 1024 * 1024;
+      if (clip !== undefined) {
+        const { clip: c, address: a } = live.locateClip(clip);
+        if (!(c instanceof AudioClip)) throw new LiveError(`${a} is not an audio clip; a MIDI clip has no audio to measure`);
+        const file = c.filePath;
+        let whole: Audio;
+        try {
+          whole = parseAudio(await readFile(file, tooLarge));
+        } catch (e) {
+          if (e instanceof LiveError) throw e;
+          const why = e instanceof Error ? e.message : String(e);
+          throw new LiveError(`cannot measure ${a}'s file ${file}: ${why}${/not a WAV or AIFF/.test(why) ? " (only WAV and AIFF files can be read)" : ""}`);
+        }
+        const beat = 60 / live.song.tempo;
+        const seconds = (marker: number) => (c.warping ? secondsAtBeat(c.warpMarkers, marker, beat) : marker);
+        const frames = whole.channels[0]?.length ?? 0;
+        const secs = (frames: number) => Math.round((frames / whole.sampleRate) * 1000) / 1000;
+        const from = Math.min(frames, Math.max(0, Math.round(seconds(c.startMarker) * whole.sampleRate)));
+        const to = Math.min(frames, Math.max(from, Math.round(seconds(c.endMarker) * whole.sampleRate)));
+        if (to <= from) throw new LiveError(`the clip's markers (${secs(from)} s to ${secs(to)} s of the file) leave nothing to measure`);
+        const audio: Audio = { sampleRate: whole.sampleRate, channels: whole.channels.map((ch) => ch.subarray(from, to)) };
+        return {
+          clip: a, file, from: secs(from), to: secs(to), ...measure(audio), ...extra(audio),
+          note: `the clip's file between its markers (seconds of the file), before warping, gain and effects${c.warping ? "; the markers are beats mapped through the clip's warp markers, with the last segment's tempo beyond them" : ""}; null dBFS or LUFS means no signal at all (minus infinity), unless lufsNote says the range was too short`,
+        };
+      }
+      if (start === undefined || end === undefined) throw new LiveError("track needs start and end in beats");
+      const t = live.track(track!);
       if (!(t instanceof AudioTrack)) throw new LiveError(`${track} is not an audio track; Live can render only audio tracks, and only the audio of their clips before any effect`);
       if (end <= start) throw new LiveError("end must come after start");
       const seconds = ((end - start) * 60) / live.song.tempo;
@@ -911,8 +974,9 @@ export function createServer(deps: ServerDeps): McpServer {
         throw new LiveError(`Live could not render ${track} from beat ${start} to ${end}: ${e instanceof Error ? e.message : String(e)}`);
       }
       try {
-        if (fs.statSync(file).size > 200 * 1024 * 1024) throw new LiveError("the rendered file is larger than 200 MB; measure a shorter range");
-        return { track, from: start, to: end, ...measure(parseAudio(fs.readFileSync(file))), note: "the track's clips before its effects; null dBFS or LUFS means no signal at all (minus infinity), unless lufsNote says the range was too short" };
+        if (fs.statSync(file).size > tooLarge) throw new LiveError("the rendered file is larger than 200 MB; measure a shorter range");
+        const audio = parseAudio(fs.readFileSync(file));
+        return { track, from: start, to: end, ...measure(audio), ...extra(audio), note: "the track's clips before its effects; null dBFS or LUFS means no signal at all (minus infinity), unless lufsNote says the range was too short" };
       } finally {
         fs.rm(file, { force: true }, () => {});
       }

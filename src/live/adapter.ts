@@ -517,3 +517,17 @@ function at<T>(list: T[], index: number, what: string, address: string): T {
   if (item === undefined) throw new LiveError(`"${address}": no ${what} ${index} (there are ${list.length})`);
   return item;
 }
+
+/**
+ * Seconds into an audio clip's file at a beat of the clip, through its warp markers: linear between two markers, the
+ * nearest segment's tempo beyond them, and `secondsPerBeat` (the set's tempo) when the clip has fewer than two.
+ */
+export function secondsAtBeat(markers: { sampleTime: number; beatTime: number }[], beat: number, secondsPerBeat: number): number {
+  const m = [...markers].sort((a, b) => a.beatTime - b.beatTime);
+  if (m.length === 0) return beat * secondsPerBeat;
+  if (m.length === 1) return m[0].sampleTime + (beat - m[0].beatTime) * secondsPerBeat;
+  let i = 0;
+  while (i < m.length - 2 && beat > m[i + 1].beatTime) i++;
+  const a = m[i], b = m[i + 1];
+  return a.sampleTime + ((beat - a.beatTime) * (b.sampleTime - a.sampleTime)) / (b.beatTime - a.beatTime);
+}
