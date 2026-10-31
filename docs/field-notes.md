@@ -308,13 +308,14 @@ one undo. On a test track, nineteen undos left the editor in place and changed n
 device's own ready flag had gone back to "loading" on the first.
 
 **Why.** Live's Edit menu gave the answer: the next step read *Undo Change "Osc 3 Table Note"*. The editor sets itself
-up when it loads, and part of that setup switches the banks of its table controls, once per oscillator. Live counts
-each of those as a change of the parameter in that bank slot, and so as an undo step, although no value the API shows
-had moved. The device's load sat under a pile of its own steps.
+up when it loads, and one part of that setup, which switches the banks of its table controls, had fallen into a loop
+that never ended. Live counts each switch as a change of the parameter in that bank slot, and so as an undo step,
+although no value the API shows had moved. The device's load sat under a pile of its own steps that grew faster than
+anyone could undo.
 
-**Fix.** On the device's side: start in the state the device is built with, so that nothing is written when it
-loads. Live MCP cannot tell, when `undo` is asked for, how many steps a device added; the `undo` tool is still one
-step, as Live's own Cmd+Z is.
+**Fix.** On the device's side: the loop is gone, and the device starts in the state it is built with, so that nothing
+is written when it loads. Live MCP cannot tell, when `undo` is asked for, how many steps a device added; the `undo`
+tool is still one step, as Live's own Cmd+Z is.
 
 **Lesson.** Everything a Max for Live device writes to its parameters at load becomes an undo step for the user. A
 device that is quiet at load is also one that undo removes in one go.
