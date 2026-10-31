@@ -3,6 +3,7 @@
 // come from here. Container: "ampf" u32 "mmmm" | "meta" u32 u32 | "ptch" u32(len) then either the patcher JSON
 // (unfrozen) or "mx@c" u32(16) u32(0) u32(dlst offset) and the JSON followed by the embedded files (frozen).
 import * as fs from "node:fs";
+import type { M4lGuide } from "./guide.js";
 
 export interface M4lParameter {
   longName: string;
@@ -32,6 +33,8 @@ export interface M4lDevice {
   frozen: boolean;
   /** the patcher's description (Patcher Inspector), where an author can say what the device is and how to drive it */
   description?: string;
+  /** the author's guide from the .md file beside the .amxd file, if there is one */
+  guide?: M4lGuide;
   /** parameters visible to Live, in Live's order; index 0 is Live's own "Device On" */
   parameters: M4lParameter[];
   /** everything in the patcher, including the ones Live does not show */

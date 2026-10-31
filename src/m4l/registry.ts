@@ -1,12 +1,14 @@
 // registry.ts – knows the .amxd files on disk and recognises them in the set by their parameter fingerprint:
 // the short names Live reports, in Live's order, match exactly one file's liveOrder().
+// A Markdown file beside an .amxd file with the same name is the author's guide to the device and travels with it.
 // An installed extension may not read outside its own folder, so when the folders cannot be read directly the
-// registry asks the LiveRemote bridge to list and read the .amxd files instead, in the background.
+// registry asks the LiveRemote bridge to list and read the files instead, in the background.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { readAmxd, type M4lDevice } from "./amxd.js";
+import { guideFileFor, parseGuide } from "./guide.js";
 
-/** Lists and reads .amxd files for the registry when it may not touch them itself (the LiveRemote bridge). */
+/** Lists and reads .amxd and .md files for the registry when it may not touch them itself (the LiveRemote bridge). */
 export interface AmxdSource {
   list(directories: string[]): Promise<{ file: string; mtime: number }[]>;
   read(file: string): Promise<Buffer>;
@@ -24,8 +26,12 @@ export interface RegistryOptions {
 interface Entry {
   device: M4lDevice;
   mtimeMs: number;
+  /** the guide file's modification time, or undefined when the device has none */
+  guideMtimeMs?: number;
   fingerprint: string;
 }
+
+const isAmxd = (file: string) => file.toLowerCase().endsWith(".amxd");
 
 const RESCAN_MS = 60_000;
 const RETRY_MS = 5_000;
@@ -99,14 +105,22 @@ export class M4lRegistry {
       const errors: string[] = [];
       try {
         const listed = await source.list(this.options.directories);
-        const seen = new Set(listed.map((f) => f.file));
-        for (const { file, mtime } of listed.slice(0, this.options.maxFiles ?? 500)) {
+        const guides = new Map(listed.filter((f) => !isAmxd(f.file)).map((f) => [f.file, f.mtime]));
+        const devices = listed.filter((f) => isAmxd(f.file)).slice(0, this.options.maxFiles ?? 500);
+        const seen = new Set(devices.map((f) => f.file));
+        for (const { file, mtime } of devices) {
           const have = this.entries.get(file);
-          if (have && have.mtimeMs === mtime) continue;
-          const bytes = await source.read(file); // a bridge failure here ends the refresh as unfinished
+          const guideFile = guideFileFor(file);
+          const guideMtime = guides.get(guideFile);
+          if (have && have.mtimeMs === mtime && have.guideMtimeMs === guideMtime) continue;
           try {
-            this.put(file, mtime, readAmxd(file, bytes));
+            // A bridge failure here ends the refresh as unfinished; an unreadable file is skipped with a note.
+            const device = have && have.mtimeMs === mtime ? have.device : readAmxd(file, await source.read(file));
+            if (guideMtime !== undefined) device.guide = parseGuide((await source.read(guideFile)).toString("utf8"), guideFile);
+            else delete device.guide;
+            this.put(file, mtime, device, guideMtime);
           } catch (e) {
+            if (e instanceof Error && !/^[^:]*\.amxd: /.test(e.message) && !(e as NodeJS.ErrnoException).code) throw e;
             this.entries.delete(file);
             errors.push(`${file}: ${(e as Error).message}`);
           }
@@ -136,18 +150,28 @@ export class M4lRegistry {
     } catch {
       return;
     }
-    const have = this.entries.get(file);
-    if (have && have.mtimeMs === mtimeMs) return;
+    const guideFile = guideFileFor(file);
+    let guideMtimeMs: number | undefined;
     try {
-      this.put(file, mtimeMs, readAmxd(file));
+      guideMtimeMs = fs.statSync(guideFile).mtimeMs;
+    } catch {
+      guideMtimeMs = undefined;
+    }
+    const have = this.entries.get(file);
+    if (have && have.mtimeMs === mtimeMs && have.guideMtimeMs === guideMtimeMs) return;
+    try {
+      const device = have && have.mtimeMs === mtimeMs ? have.device : readAmxd(file);
+      if (guideMtimeMs !== undefined) device.guide = parseGuide(fs.readFileSync(guideFile, "utf8"), guideFile);
+      else delete device.guide;
+      this.put(file, mtimeMs, device, guideMtimeMs);
     } catch (e) {
       this.entries.delete(file);
       this.errors.push(`${file}: ${(e as Error).message}`);
     }
   }
 
-  private put(file: string, mtimeMs: number, device: M4lDevice) {
-    this.entries.set(file, { device, mtimeMs, fingerprint: fingerprint(device.parameters.map((p) => p.shortName)) });
+  private put(file: string, mtimeMs: number, device: M4lDevice, guideMtimeMs?: number) {
+    this.entries.set(file, { device, mtimeMs, guideMtimeMs, fingerprint: fingerprint(device.parameters.map((p) => p.shortName)) });
   }
 
   /**

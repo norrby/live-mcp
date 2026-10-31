@@ -11,6 +11,7 @@ import { explain } from "../live/errors.js";
 import { ChangeTracker } from "../live/changes.js";
 import { M4lRegistry, isForbidden } from "../m4l/registry.js";
 import type { M4lDevice, M4lParameter } from "../m4l/amxd.js";
+import { findSection } from "../m4l/guide.js";
 import { AudioClip, AudioTrack, Device, MidiTrack, Track } from "@ableton-extensions/sdk";
 import { Bridge, BridgeError } from "../bridge/client.js";
 import { capabilities } from "./capabilities.js";
@@ -20,7 +21,7 @@ import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 export const INSTRUCTIONS = [
   "Live MCP reads and changes the Ableton Live set that is open right now. Work like this:",
   "- Start with get_set. Addresses (t0, t0/d1, t0/d1/p3, t0/s0, t0/a0) are positions and shift when things move; keep the #id a create answers with.",
-  "- Before driving a Max for Live device, read list_parameters: m4l.about is its author's own instructions, follow them. Parameters under m4l.askFirst change only when the user asked for that very action; never set userAsked on your own.",
+  "- Before driving a Max for Live device, read list_parameters: m4l.about is its author's own instructions, follow them. When m4l.guide lists sections, read the one that fits the task with device_guide before you start. Parameters under m4l.askFirst change only when the user asked for that very action; never set userAsked on your own.",
   "- When one parameter decides what others edit (a step, page or mode selector), set it in a call of its own first.",
   "- Each call is one undo step, so put related changes in one call; Live's undo (Cmd/Ctrl+Z) takes back a whole call. The exception: a new clip that also gets notes or a name, or a new track with a name, takes two steps (the clip or track, then its contents or name).",
   "- A track that has played a session clip ignores its arrangement clips until transport back_to_arrangement.",
@@ -31,7 +32,7 @@ export const INSTRUCTIONS = [
 const READ_ONLY_NOTE =
   "- The user has set Live MCP to read-only: you can look at the set but change nothing. If the user asks for a change, say that read-only mode is on and can be turned off under Live MCP status… in the right-click menu of a track or scene.";
 
-const READ_ONLY = new Set(["get_set", "get_capabilities", "list_parameters", "find_parameters", "get_parameters", "get_changes", "browse", "get_scenes", "get_clips", "get_notes", "get_routing", "get_device_routing", "get_clip_automation", "measure_audio"]);
+const READ_ONLY = new Set(["get_set", "get_capabilities", "list_parameters", "find_parameters", "device_guide", "get_parameters", "get_changes", "browse", "get_scenes", "get_clips", "get_notes", "get_routing", "get_device_routing", "get_clip_automation", "measure_audio"]);
 /** Tools that change the set without removing or overwriting what is there; any other tool that writes counts as destructive. */
 const NOT_DESTRUCTIVE = new Set([
   "set_parameters", "set_parameter_display", "set_track", "set_tempo", "set_clip", "set_routing", "set_device_routing",
@@ -291,7 +292,7 @@ export function createServer(deps: ServerDeps): McpServer {
     "list_parameters",
     {
       description:
-        "All parameters of a device: address, name, range, choices, current value. For recognised Max for Live devices also the long name, unit and help text, the device's own description (m4l.about: read it first, it is the author's word on how to drive the device), and the controls Live does not expose with the parameters that reach the same thing (m4l.notInLive). With display=true (needs the bridge) also the value as Live shows it, e.g. \"-12.0 dB\". Max for Live short names may repeat: address by index. A device with more than 64 parameters answers with compact rows (address, name, long name, value, min, max) unless asked with query or compact=false; query finds parameters by name or help text, and help=false leaves the help texts out. The device's description (m4l.about) comes without query; with query, or compact=true, it is left out.",
+        "All parameters of a device: address, name, range, choices, current value. For recognised Max for Live devices also the long name, unit and help text, the device's own description (m4l.about: read it first, it is the author's word on how to drive the device), and the controls Live does not expose with the parameters that reach the same thing (m4l.notInLive). When the author wrote a guide to the instrument, m4l.guide names its sections, to read one at a time with device_guide. With display=true (needs the bridge) also the value as Live shows it, e.g. \"-12.0 dB\". Max for Live short names may repeat: address by index. A device with more than 64 parameters answers with compact rows (address, name, long name, value, min, max) unless asked with query or compact=false; query finds parameters by name or help text, and help=false leaves the help texts out. The device's description (m4l.about) comes without query; with query, or compact=true, it is left out.",
       inputSchema: {
         device: address,
         values: z.boolean().default(true).describe("Include current values"),
@@ -333,12 +334,42 @@ export function createServer(deps: ServerDeps): McpServer {
           about: asked === true || q ? undefined : m4l.description,
           askFirst: askFirst.length ? { parameters: askFirst, rule: "change these only when the user asks for it; set_parameters refuses them otherwise" } : undefined,
           notInLive: hidden.length && !compact ? hidden : undefined,
+          // The guide's outline is small enough to come every time; its text comes through device_guide, a section at a time.
+          guide: m4l.guide?.sections.length
+            ? { title: m4l.guide.title, sections: m4l.guide.sections.map((s) => s.name), hint: "the author's guide to the instrument: device_guide with a section reads it; read the section that fits the task before driving the device" }
+            : undefined,
         });
       }
       out.parameters = q ? rows.filter((r, i) => matches(r.name) || matches(r.longName) || matches(m4l?.parameters[i]?.help)) : rows;
       if (compact && asked === undefined)
         out.note = `${rows.length} parameters, so compact rows; list_parameters with query (a name or a word from the help texts) gives choices and help for some, compact=false for all`;
       return out;
+    }),
+  );
+
+  server.registerTool(
+    "device_guide",
+    {
+      description:
+        "The author's guide to a recognised Max for Live device: how the instrument behind the parameters works, by section. Without section: the title, the introduction and the section headings (list_parameters shows the headings too, as m4l.guide). With section: that section's text; a heading, or the start of one, or a word in one. whole=true gives the whole guide at once, for a small one. Read the section that fits the task before driving the device; the parameters' help texts say what each control does, the guide says how they work together.",
+      inputSchema: {
+        device: address,
+        section: z.string().optional().describe("A section heading from m4l.guide, or part of one"),
+        whole: z.boolean().optional().describe("The whole guide, every section"),
+      },
+    },
+    guarded(async ({ device, section, whole }) => {
+      const d = live.device(device);
+      const m4l = m4lFor(device);
+      if (!m4l) throw new LiveError(`${d.name} is not a recognised Max for Live device, so it has no guide; list_parameters gives what Live knows about it`);
+      const guide = m4l.guide;
+      if (!guide) throw new LiveError(`${d.name} has no guide: its author wrote none beside ${path.basename(m4l.file)} (${path.basename(m4l.file, path.extname(m4l.file))}.md). Its description (m4l.about) and the parameters' help texts in list_parameters are what there is`);
+      const headings = guide.sections.map((s) => s.name);
+      if (whole) return { device, name: d.name, file: guide.file, title: guide.title, intro: guide.intro, sections: guide.sections };
+      if (section === undefined) return { device, name: d.name, file: guide.file, title: guide.title, intro: guide.intro, sections: headings, hint: "device_guide with section reads one" };
+      const found = findSection(guide, section);
+      if (found.length === 0) throw new LiveError(`${d.name}'s guide has no section like "${section}"; its sections are: ${headings.join(", ")}`);
+      return { device, name: d.name, title: guide.title, sections: found, ...(found.length > 1 ? { note: `${found.length} sections match "${section}"` } : {}) };
     }),
   );
 

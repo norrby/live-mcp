@@ -322,6 +322,22 @@ test("a parameter its author marked [ask first] is refused unless the user asked
   const asked = await call(c, "set_parameters", { changes: [{ address: "r0/d0/p1", value: 2, userAsked: true }] });
   assert.equal(asked.data[0].after, 2);
   assert.match((await call(c, "set_parameter_display", { parameter: "r0/d0/p1", target: "Push" })).data, /Nothing was changed/);
+
+  // The author's guide beside the device file: its outline with the parameters, its text a section at a time.
+  assert.equal(list.m4l.guide, undefined);
+  assert.match((await call(c, "device_guide", { device: "r0/d0" })).data, /has no guide.*Guarded\.md/);
+  fs.writeFileSync(path.join(amxdDir, "Guarded.md"), "# Guarded\n\nAn editor for a synth.\n\n## Signal path\nOsc, filter, out.\n\n## Patches\nPush sends everything.\n");
+  registry.scan(true);
+  const withGuide = (await call(c, "list_parameters", { device: "r0/d0", compact: true })).data;
+  assert.deepEqual(withGuide.m4l.guide.sections, ["Signal path", "Patches"], "the outline comes even with compact rows");
+  const outline = (await call(c, "device_guide", { device: "r0/d0" })).data;
+  assert.equal(outline.title, "Guarded");
+  assert.equal(outline.intro, "An editor for a synth.");
+  assert.deepEqual(outline.sections, ["Signal path", "Patches"]);
+  const section = (await call(c, "device_guide", { device: "r0/d0", section: "patch" })).data;
+  assert.deepEqual(section.sections, [{ name: "Patches", text: "Push sends everything." }]);
+  assert.match((await call(c, "device_guide", { device: "r0/d0", section: "envelopes" })).data, /no section like "envelopes".*Signal path, Patches/);
+  assert.equal((await call(c, "device_guide", { device: "r0/d0", whole: true })).data.sections.length, 2);
   await c.close();
 });
 

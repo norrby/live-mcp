@@ -55,6 +55,38 @@ test("when Live forbids reading the folders, the registry reads the .amxd files 
   assert.equal(registry.files().length, 0, "a removed file is forgotten");
 });
 
+test("through the bridge, a guide beside the .amxd file comes with the device and is read again on its own when it changes", async () => {
+  const files: Record<string, { mtime: number; bytes: Buffer }> = {
+    "/lib/Filter.amxd": { mtime: 1, bytes: amxd([["Cutoff Frequency", "Freq"], ["Resonance Amount", "Res"]]) },
+    "/lib/Filter.md": { mtime: 1, bytes: Buffer.from("# Filter\n\nA filter.\n\n## Cutoff\nWhere it starts to cut.\n") },
+    "/lib/README.md": { mtime: 1, bytes: Buffer.from("not a guide: no .amxd of that name") },
+  };
+  const reads: string[] = [];
+  const source: AmxdSource = {
+    list: async () => Object.entries(files).map(([file, f]) => ({ file, mtime: f.mtime })),
+    read: async (file) => (reads.push(file), files[file].bytes),
+  };
+  const registry = new M4lRegistry({ directories: ["/lib"], fallback: source });
+  registry.via = "bridge";
+  await registry.refresh();
+  const m = registry.match(["Device On", "Freq", "Res"]);
+  assert.equal(m?.guide?.title, "Filter");
+  assert.deepEqual(m?.guide?.sections.map((s) => s.name), ["Cutoff"]);
+  assert.deepEqual(reads, ["/lib/Filter.amxd", "/lib/Filter.md"], "the README is not a guide and is not read");
+  assert.equal(registry.files().length, 1, "guides are not devices");
+  await registry.refresh(); // match() and files() started a background rescan; let it finish before changing the files
+
+  files["/lib/Filter.md"] = { mtime: 2, bytes: Buffer.from("## Cutoff\nRewritten.\n") };
+  await registry.refresh();
+  assert.deepEqual(reads.slice(2), ["/lib/Filter.md"], "a changed guide is read again without the device file");
+  assert.equal(registry.match(["Device On", "Freq", "Res"])?.guide?.sections[0].text, "Rewritten.");
+
+  delete files["/lib/Filter.md"];
+  await registry.refresh();
+  assert.equal(registry.match(["Device On", "Freq", "Res"])?.guide, undefined, "a removed guide is forgotten");
+  assert.equal(reads.length, 3);
+});
+
 test("an unreachable bridge leaves an explanation instead of an exception", async () => {
   const registry = new M4lRegistry({
     directories: ["/lib"],
