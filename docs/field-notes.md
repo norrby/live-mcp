@@ -307,18 +307,22 @@ never rebuild while a device is loading.
 one undo. On a test track, nineteen undos left the editor in place and changed nothing visible in the set; only the
 device's own ready flag had gone back to "loading" on the first.
 
-**Why.** Live's Edit menu gave the answer: the next step read *Undo Change "Osc 3 Table Note"*. The editor sets itself
-up when it loads, and one part of that setup, which switches the banks of its table controls, had fallen into a loop
-that never ended. Live counts each switch as a change of the parameter in that bank slot, and so as an undo step,
-although no value the API shows had moved. The device's load sat under a pile of its own steps that grew faster than
-anyone could undo.
+**Why.** Live's Edit menu gave the answer: the next step read *Undo Change "Osc 3 Table Note"*. A freshly loaded
+editor has an empty table, but when it loaded it still wrote the default step value into the knob that mirrors the
+table, so that the knob would show the table. Live made an undo step of that write, although the knob is marked as
+not undoable. Undo then turned the knob back to zero; the editor took that for a turn of the knob by the user, refused
+it, since there is no step under the knob, and wrote the default again, which became a new undo step. Each undo
+produced the step that the next undo would take back, and the loading of the device never came up.
 
-**Fix.** On the device's side: the loop is gone, and the device starts in the state it is built with, so that nothing
-is written when it loads. Live MCP cannot tell, when `undo` is asked for, how many steps a device added; the `undo`
-tool is still one step, as Live's own Cmd+Z is.
+**Fix.** On the device's side: the knobs are not written when there is no step under them, a knob is never written
+before Live has restored it, and the bank switching starts from the bank the device is built with. A freshly loaded
+editor then goes away after three undos: its ready flag, its hidden version number, and the load itself. Live MCP
+cannot tell, when `undo` is asked for, how many steps a device added; the `undo` tool is still one step, as Live's
+own Cmd+Z is.
 
-**Lesson.** Everything a Max for Live device writes to its parameters at load becomes an undo step for the user. A
-device that is quiet at load is also one that undo removes in one go.
+**Lesson.** Everything a Max for Live device writes to its parameters becomes an undo step for the user, whatever the
+object's undo setting says, and a device that answers an undone value by writing it again has made undo impossible.
+A device that is quiet at load, and takes what Live gives it, is also one that undo removes in a few steps.
 
 ## And when it works
 
