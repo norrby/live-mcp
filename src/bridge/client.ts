@@ -33,7 +33,12 @@ export class Bridge {
   }
 
   call<T = unknown>(cmd: string, args: unknown[] = [], kwargs: Record<string, unknown> = {}): Promise<T> {
-    const token = this.token();
+    let token: string | undefined;
+    try {
+      token = this.token();
+    } catch (e) {
+      return Promise.reject(e); // callers use .catch(), which a throw here would get past
+    }
     const { port, host = "127.0.0.1", timeoutMs = 45_000 } = this.options;
     return new Promise<T>((resolve, reject) => {
       const sock = net.createConnection({ host, port });
