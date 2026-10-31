@@ -128,6 +128,7 @@ class LiveRemote(ControlSurface):
     def __init__(self, c_instance):
         super().__init__(c_instance)
         self._queue = queue.Queue()
+        self._lock = threading.Lock()
         self._stop = threading.Event()
         self._sock = None
         self._token = load_token()
@@ -185,10 +186,19 @@ class LiveRemote(ControlSurface):
                     done = threading.Event()
                     holder = {}
                     self._queue.put((req, holder, done))
-                    if done.wait(MAIN_THREAD_TIMEOUT):
-                        resp = holder.get("resp", err("no response"))
+                    if not done.wait(MAIN_THREAD_TIMEOUT):
+                        with self._lock:
+                            # Not begun yet: drop it, so it does not run later behind the caller's back.
+                            holder.setdefault("cancelled", True)
+                        if holder.get("cancelled") is True:
+                            resp = err("timeout: Live's main thread did not get to it within %d s; nothing was done"
+                                       % MAIN_THREAD_TIMEOUT)
+                        else:
+                            done.wait(MAIN_THREAD_TIMEOUT)
+                            resp = holder.get("resp", err("timeout: Live's main thread began but did not finish; it "
+                                                          "may still complete"))
                     else:
-                        resp = err("timeout: Live's main thread did not respond")
+                        resp = holder.get("resp", err("no response"))
                 try:
                     f.write((json.dumps(resp, default=str) + "\n").encode("utf-8"))
                     f.flush()
@@ -199,6 +209,9 @@ class LiveRemote(ControlSurface):
         try:
             while True:
                 req, holder, done = self._queue.get_nowait()
+                with self._lock:
+                    if holder.setdefault("cancelled", False):
+                        continue
                 try:
                     holder["resp"] = self._execute(req)
                 except Exception:

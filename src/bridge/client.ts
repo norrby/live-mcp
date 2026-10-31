@@ -10,6 +10,7 @@ export interface BridgeOptions {
   host?: string;
   token?: string;
   tokenFile?: string;
+  /** longer than LiveRemote waits for Live (up to 40 s), so its answer, which says whether anything was done, comes first */
   timeoutMs?: number;
 }
 
@@ -33,7 +34,7 @@ export class Bridge {
 
   call<T = unknown>(cmd: string, args: unknown[] = [], kwargs: Record<string, unknown> = {}): Promise<T> {
     const token = this.token();
-    const { port, host = "127.0.0.1", timeoutMs = 20_000 } = this.options;
+    const { port, host = "127.0.0.1", timeoutMs = 45_000 } = this.options;
     return new Promise<T>((resolve, reject) => {
       const sock = net.createConnection({ host, port });
       let buf = "";
