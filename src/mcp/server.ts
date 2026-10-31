@@ -6,7 +6,7 @@ import { measure, parseAudio } from "../audio/analyse.js";
 import { parseMidi } from "../midi/smf.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { LiveAdapter, LiveError, type ParameterInfo, type TrackInfo } from "../live/adapter.js";
+import { LiveAdapter, LiveError, type ParameterInfo, type TrackInfo, type V } from "../live/adapter.js";
 import { explain } from "../live/errors.js";
 import { ChangeTracker } from "../live/changes.js";
 import { M4lRegistry, isForbidden } from "../m4l/registry.js";
@@ -182,6 +182,24 @@ export function createServer(deps: ServerDeps): McpServer {
    * Live finds an object's position when a delete is sent and deletes at that position once the earlier deletes are
    * done, so deletes sent together go last-first: none of them then shifts the one after it.
    */
+  /**
+   * Waits until a newly loaded device is ready to be driven: it has parameters, and their number and values have held
+   * still for 300 ms, at least a second after loading (a Max for Live device sets itself up in that time and may
+   * ignore what it is sent before). ready false after the timeout.
+   */
+  const settled = async (device: Device<V>, timeoutMs = 15_000) => {
+    const t0 = Date.now();
+    let last = "";
+    let since = t0;
+    while (Date.now() - t0 < timeoutMs) {
+      const params = device.parameters;
+      const now = params.length ? `${params.length}:${(await live.readValues(params)).join(",")}` : "";
+      if (now !== last) (last = now), (since = Date.now());
+      else if (now && Date.now() - since >= 300 && Date.now() - t0 >= 1000) return { ready: true, ms: Date.now() - t0 };
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return { ready: false, ms: Date.now() - t0 };
+  };
   const lastFirst = <T>(items: T[], position: (item: T) => number) => [...items].sort((a, b) => position(b) - position(a));
 
   /**
@@ -460,7 +478,7 @@ export function createServer(deps: ServerDeps): McpServer {
   server.registerTool(
     "load_browser_item",
     {
-      description: "Load any loadable browser item onto a track by name: a saved preset (\"My Synth.adv\" keeps everything it was saved with, including an External Instrument's MIDI To / Audio From), a Max for Live device (\"My Device.amxd\"), a plug-in or a built-in device. Live places it after the track's selected device, or last, and selects the track while doing so. The first match across the browser roots wins; use browse to see what exists. A MIDI file (.mid) does not load this way: use import_midi_file." + viaBridge,
+      description: "Load any loadable browser item onto a track by name: a saved preset (\"My Synth.adv\" keeps everything it was saved with, including an External Instrument's MIDI To / Audio From), a Max for Live device (\"My Device.amxd\"), a plug-in or a built-in device. Live places it after the track's selected device, or last, and selects the track while doing so. The first match across the browser roots wins; use browse to see what exists. A MIDI file (.mid) does not load this way: use import_midi_file. Answers once the new device is ready to be driven (ready, readyAfterMs: its parameters exist and have held still, at least a second after loading; ready false after 15 s)." + viaBridge,
       inputSchema: { track: address, item: z.string().describe("Name as the browser shows it, with or without extension") },
     },
     guarded(async ({ track, item }) => {
@@ -469,7 +487,8 @@ export function createServer(deps: ServerDeps): McpServer {
       const loaded = await bridge.call<{ from: string; item: string; devices_after: string[] }>("add_device", [bridgeTrackIndex(live, track), item]);
       const added = holder.devices.findIndex((d) => !before.includes(live.id(d)));
       if (added < 0) return { loaded: loaded.item, from: loaded.from, note: "Live reported no new device on the track; it may have replaced the selected device or loaded a preset into it." };
-      return { loaded: loaded.item, from: loaded.from, device: live.deviceInfo(holder.devices[added], `${track}/d${added}`) };
+      const { ready, ms } = await settled(holder.devices[added]);
+      return { loaded: loaded.item, from: loaded.from, ready, readyAfterMs: ms, device: live.deviceInfo(holder.devices[added], `${track}/d${added}`) };
     }),
   );
 
