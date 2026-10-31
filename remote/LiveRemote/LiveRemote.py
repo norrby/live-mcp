@@ -20,6 +20,7 @@ the queue every 100 ms via schedule_message.
 """
 import base64
 import json
+import math
 import os
 import queue
 import secrets
@@ -200,7 +201,11 @@ class LiveRemote(ControlSurface):
                     else:
                         resp = holder.get("resp", err("no response"))
                 try:
-                    f.write((json.dumps(resp, default=str) + "\n").encode("utf-8"))
+                    try:
+                        text = json.dumps(resp, default=str, allow_nan=False)
+                    except ValueError as e:
+                        text = json.dumps(err("the answer could not be sent as JSON (%s); the command did run" % e))
+                    f.write((text + "\n").encode("utf-8"))
                     f.flush()
                 except OSError:
                     break
@@ -820,7 +825,8 @@ class LiveRemote(ControlSurface):
         best = min((lo, hi, p.min, p.max), key=lambda v: abs(shown(v) - want))
         p.value = best
         row = self._param_row(p, list(d.parameters).index(p))
-        row.update(target=target, error_abs=abs(shown(p.value) - want))
+        got = shown(p.value)
+        row.update(target=target, error_abs=0.0 if got == want else abs(got - want))
         return row
 
     # -- transport, selection, scenes and clips (for the live-mcp bridge; the Extensions SDK has none of these) --
@@ -918,6 +924,8 @@ class LiveRemote(ControlSurface):
 
 
 def _jsonable(v, depth=0):
+    if isinstance(v, float) and not math.isfinite(v):
+        return str(v)  # JSON has no inf or nan; "-inf" still says what Live showed
     if v is None or isinstance(v, (bool, int, float, str)):
         return v
     if depth > 4:
