@@ -87,8 +87,9 @@ export function parseMidi(buf: Buffer): MidiFile {
         const data = body.subarray(r.at, r.at + len);
         r.at += len;
         if (type === 0x03 && !name) name = data.toString("latin1").trim();
-        else if (type === 0x51 && len === 3 && bpm === undefined) bpm = Math.round((60_000_000 / data.readUIntBE(0, 3)) * 100) / 100;
-        else if (type === 0x58 && len >= 2 && !timeSignature) timeSignature = [data[0], 2 ** data[1]];
+        // A tempo of 0 or a time signature of 0 beats or a 1/128+ note is a broken file; such values are left out.
+        else if (type === 0x51 && len === 3 && bpm === undefined && data.readUIntBE(0, 3) > 0) bpm = Math.round((60_000_000 / data.readUIntBE(0, 3)) * 100) / 100;
+        else if (type === 0x58 && len >= 2 && !timeSignature && data[0] > 0 && data[1] <= 6) timeSignature = [data[0], 2 ** data[1]];
         else if (type === 0x2f) break;
         continue;
       }
