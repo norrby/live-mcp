@@ -186,21 +186,32 @@ it. `get_capabilities` asks LiveRemote for a `ping` to tell which of the two it 
 
 ## 7. Recognising Max for Live devices
 
-Recognising involves the **`.amxd` reader**, the **registry** and the **fingerprint**.
+Recognising involves the **`.amxd` reader**, the **registry**, the **origins** and the **fingerprint**.
 
-- **The problem:** for a Max for Live device, Live reports only each parameter's short name, and those repeat: a
-  synth editor may have four parameters called "A", the attack of each envelope. The long names, units, choices and help texts are only in
-  the device's `.amxd` file.
+- **The problem:** for a Max for Live device, Live reports only each parameter's short name, and those may
+  repeat: a synth editor may have four parameters called "A", the attack of each envelope. The long names, units,
+  choices and help texts are only in the device's `.amxd` file, and Live's API never says which file a device was
+  loaded from.
 - **The reader** (`amxd.ts`) opens an `.amxd` file, frozen or not, finds the patcher inside it, and lists the
   parameters in the order Live shows them: Live's own "Device On" first, then the visible parameters sorted by
   long name.
-- **The registry** (`registry.ts`) reads every `.amxd` file in the configured folders, and reads a file again only
-  when it has changed. An installed extension may not read those folders, so then the registry asks the bridge to
+- **The registry** (`registry.ts`) reads every `.amxd` file in the configured folders (the whole User Library by
+  default), the folders under Places and the single files the origins name, and reads a file again only when it
+  has changed. An installed extension may not read those folders, so then the registry asks the bridge to
   list and read the files instead (the commands `amxd_list` and `amxd_read`, which list and read `.amxd` files, and
   `guide_read`, which reads the one `.md` file a device's description names, and nothing else). That happens in the
   background, so a device is recognised from the next call after the files arrive.
+- **The origins** (`origins.ts`) are what is known about where each device in the set came from. The saved set
+  records each Max for Live device's file, so the bridge reads the set's `.als` file (`m4l_sources`) and turns each
+  device's place in it into our address, then into the device's id. A device Live MCP loaded itself comes from the
+  file it chose. The bridge also names the folders under Places and which devices in the set are Max for Live
+  devices. The set's record is as of its last save, so a device added after it is known only by its fingerprint,
+  and one the fingerprint cannot place either gets a note: saving the set, or keeping the file in the User Library
+  or under Places, makes it known.
 - **The fingerprint** is the list of short names in that order. When a tool shows a device, the registry compares
-  the device's names in Live with every file's fingerprint. Exactly one match means the device is recognised.
+  the device's names in Live with every file's fingerprint. A file the origins name is taken first, provided its
+  fingerprint still matches (a device edited after the save does not). Otherwise exactly one match means the
+  device is recognised.
   Several files with the same fingerprint count only when they describe the same parameters, such as a frozen and
   an unfrozen copy: then the file named like the device in Live is the one, and when no file is (a device may
   rename itself), `kind` names them all rather than guess.
