@@ -1267,7 +1267,10 @@ export function createServer(deps: ServerDeps): McpServer {
       description: "Set a track's input/output routing by (part of) the option name as shown in Live, and monitoring (In/Auto/Off). Omitted fields stay. Use get_routing for the options." + viaBridge,
       inputSchema: { track: address, input_type: z.string().optional(), input_channel: z.string().optional(), output_type: z.string().optional(), output_channel: z.string().optional(), monitor: z.enum(["In", "Auto", "Off"]).optional() },
     },
-    guarded(({ track, ...rest }) => bridge.call("routing", [bridgeTrackIndex(live, track)], stripUndefined(rest))),
+    guarded(async ({ track, ...rest }) => {
+      const now = await bridge.call<{ output_type?: string; monitor?: string }>("routing", [bridgeTrackIndex(live, track)], stripUndefined(rest));
+      return { ...now, ...(routingNote(now) ? { note: routingNote(now) } : {}) };
+    }),
   );
 
   server.registerTool(
@@ -1304,6 +1307,15 @@ const sessionTakes = new WeakMap<LiveAdapter, { track: string; slot: number }>()
 const NO_DEVICE_IO = "The MIDI To and Audio From of an External Instrument, and the Audio To/From of an External Audio Effect, are not in Live's APIs and can only be set in Live's window.";
 
 /** LiveRemote counts tracks as regular + return + main. */
+/** What a routing means for what is heard, where that is easy to miss. */
+function routingNote(r: { output_type?: string; monitor?: string }): string | undefined {
+  const notes: string[] = [];
+  if (/sends only/i.test(r.output_type ?? "")) notes.push("Sends Only: the track reaches the return tracks through its sends, and nothing goes to Main directly");
+  if (/no output/i.test(r.output_type ?? "")) notes.push("No Output: the track is not heard");
+  if (r.monitor === "In") notes.push("Monitor In: the track plays its input, and its clips play no notes or audio, only their automation");
+  return notes.length ? notes.join(". ") + "." : undefined;
+}
+
 function bridgeTrackIndex(live: LiveAdapter, track: string): number {
   const t = live.track(track);
   const song = live.song;
