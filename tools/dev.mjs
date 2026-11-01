@@ -13,6 +13,8 @@ import * as path from "node:path";
 const project = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const remoteSource = path.join(project, "remote", "LiveRemote", "LiveRemote.py");
 const remoteDir = process.env.LIVEREMOTE_DIR ?? path.join(os.homedir(), "Music", "Ableton", "User Library", "Remote Scripts", "LiveRemote");
+/** host.mjs exits with this when Live has quit. */
+const LIVE_QUIT = 3;
 const say = (...a) => console.log(`[dev ${new Date().toLocaleTimeString()}]`, ...a);
 
 /** One request to LiveRemote: its answer, "absent" when nothing listens, "busy" when it does not answer in time. */
@@ -52,9 +54,19 @@ function startHost() {
   const h = spawn(process.execPath, [path.join(project, "tools", "host.mjs")], { cwd: project, stdio: "inherit" });
   host = h;
   h.on("exit", (code, signal) => {
-    if (!h.stopping) say(`the host exited (${signal ?? code}); it starts again on the next change`);
     if (host === h) host = undefined;
+    if (h.stopping) return;
+    if (code === LIVE_QUIT) {
+      say("Live has quit; the host starts again when Live is running");
+      return void queue(whenLiveRuns);
+    }
+    say(`the host exited (${signal ?? code}); it starts again on the next change`);
   });
+}
+/** Starts the host once Live runs again; the Extension Host itself waits for Live to accept it. */
+async function whenLiveRuns() {
+  while (spawnSync("pgrep", ["-x", "Live"]).status !== 0) await new Promise((r) => setTimeout(r, 2000));
+  if (!host) startHost(), say("Live is running; host started");
 }
 function stopHost() {
   if (!host) return Promise.resolve();
