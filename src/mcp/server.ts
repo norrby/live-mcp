@@ -628,11 +628,13 @@ export function createServer(deps: ServerDeps): McpServer {
         if (elsewhere) throw new LiveError(`Live put "${loaded.item}" on the track "${elsewhere.name}" (${live.trackAddress(elsewhere)}), not on "${holder.name}". Tell the user; delete_device takes it away.`);
         return { loaded: loaded.item, from: loaded.from, note: "No new device appeared on the track within 10 s; Live may have replaced the selected device or loaded a preset into it." };
       }
-      const device = holder.devices[added];
+      let device = holder.devices[added];
       let movedNote: string | undefined;
       if (position !== undefined && position !== added) {
         const moved = await bridge.call<{ index: number }>("move_device", [bridgeTrackIndex(live, track), added, bridgeTrackIndex(live, track), position]);
         if (moved.index !== position) movedNote = `Live put it at position ${moved.index}, the nearest it allows, not ${position}`;
+        // Live makes a moved device anew, with a new id.
+        device = holder.devices[moved.index];
       }
       const { ready } = await settled(device);
       // A device file saved just now is not known yet; read the files again so its [ready] mark is found.
@@ -688,21 +690,20 @@ export function createServer(deps: ServerDeps): McpServer {
     "move_device",
     {
       description:
-        "Move a device to another position on its track, or onto another track (track). position counts from 0 (0 = first); leave it out to move the device last. Live keeps the order it allows (MIDI effects before the instrument, audio effects after it) and takes the nearest allowed position; the answer says which it took and lists the track's devices in their new order. Only devices directly on a track, not inside a rack. The device keeps its #id; its address changes." + viaBridge,
+        "Move a device to another position on its track, or onto another track (track). position counts from 0 (0 = first); leave it out to move the device last. Live keeps the order it allows (MIDI effects before the instrument, audio effects after it) and takes the nearest allowed position; the answer says which it took and lists the track's devices in their new order. Only devices directly on a track, not inside a rack. Live makes the moved device anew, so it gets a new #id: use the one the answer gives." + viaBridge,
       inputSchema: { device: address, track: address.optional().describe("The track to move it to; default its own"), position: z.number().int().min(0).optional() },
     },
     guarded(async ({ device, track, position }) => {
-      const d = live.locateDevice(device).device;
-      const id = live.id(d);
+      const name = live.locateDevice(device).device.name;
       const [from, index] = bridgeDeviceArgs(live, device);
       const target = track ? bridgeTrackIndex(live, track) : from;
       const holder = (track ? live.track(track) : live.locateDevice(device).holder) as Track<V>;
       const moved = await bridge.call<{ index: number; devices: string[] }>("move_device", [from, index, target, position ?? 1_000_000]);
       return {
-        moved: d.name,
+        moved: name,
         to: holder.name,
         address: `${live.trackAddress(holder)}/d${moved.index}`,
-        id,
+        id: live.id(holder.devices[moved.index]),
         position: moved.index,
         ...(position !== undefined && moved.index !== position ? { note: `Live put it at ${moved.index}, the nearest position it allows, not ${position}` } : {}),
         devices: moved.devices,
