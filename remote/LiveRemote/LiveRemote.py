@@ -902,7 +902,9 @@ class LiveRemote(ControlSurface):
         t = self._track(track)
         label, item = self._find_item(name)
         if item is None:
-            raise ValueError("no loadable browser item named %r (add the folder under Places)" % name)
+            raise ValueError("no loadable browser item named %r. Live's browser lists a file added a moment ago only "
+                             "after a while: browse its folder, then load again. A file outside the User Library "
+                             "and the folders under Places is never listed." % name)
         self.song().view.selected_track = t
         before = [d.name for d in t.devices]
         self.application().browser.load_item(item)
