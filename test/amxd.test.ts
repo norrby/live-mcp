@@ -36,11 +36,11 @@ test("[ask first] and [ready] in a help text become marks and leave the help", (
   assert.deepEqual([ready.help, ready.askFirst, ready.ready], ["Set up and listening.", undefined, true]);
 });
 
-test("liveOrder puts Device On first and sorts the parameters Live lists (invisible 0, 3 and 4) by long name in code-unit order", () => {
+test("liveOrder puts Device On first, then the automated parameters, then the not-automated ones (invisible 3 and 4), each sorted by long name in code-unit order", () => {
   const all = parametersOf({
-    patcher: { boxes: [box("Legato", "Leg"), box("LFO1 Speed", "Speed"), box("Hidden", "H", { parameter_invisible: 2 }), box("Attack", "A"), box("Stored", "S", { parameter_invisible: 1 }), box("Push Only", "P", { parameter_invisible: 3 }), box("Not Automated", "N", { parameter_invisible: 4 })] },
+    patcher: { boxes: [box("Legato", "Leg"), box("LFO1 Speed", "Speed"), box("Hidden", "H", { parameter_invisible: 2 }), box("Push Only", "P", { parameter_invisible: 3 }), box("Attack", "A"), box("Stored", "S", { parameter_invisible: 1 }), box("Not Automated", "N", { parameter_invisible: 4 }), box("Zoom", "Z")] },
   });
-  assert.deepEqual(liveOrder(all).map((p) => p.longName), ["Device On", "Attack", "LFO1 Speed", "Legato", "Not Automated", "Push Only"]);
+  assert.deepEqual(liveOrder(all).map((p) => p.longName), ["Device On", "Attack", "LFO1 Speed", "Legato", "Zoom", "Not Automated", "Push Only"], "the not-automated kinds come after the rest");
 });
 
 // Optional check against a real device: the same device frozen and unfrozen, and a JSON dump

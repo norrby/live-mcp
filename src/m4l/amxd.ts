@@ -196,11 +196,16 @@ export function parametersOf(json: unknown): M4lParameter[] {
  */
 export const inLive = (p: M4lParameter): boolean => p.invisible === 0 || p.invisible === 3 || p.invisible === 4;
 
-/** Live's parameter order: "Device On", then the parameters Live lists sorted by long name in code-unit order. */
+/**
+ * Live's parameter order: "Device On", then the automated parameters (invisible 0), then the not-automated ones (3 and
+ * 4), each group sorted by long name in code-unit order.
+ */
 export function liveOrder(all: M4lParameter[]): M4lParameter[] {
-  const visible = all.filter(inLive).sort((a, b) => (a.longName < b.longName ? -1 : a.longName > b.longName ? 1 : 0));
+  const byName = (a: M4lParameter, b: M4lParameter) => (a.longName < b.longName ? -1 : a.longName > b.longName ? 1 : 0);
+  const automated = all.filter((p) => p.invisible === 0).sort(byName);
+  const notAutomated = all.filter((p) => inLive(p) && p.invisible !== 0).sort(byName);
   const deviceOn: M4lParameter = { longName: "Device On", shortName: "Device On", type: 2, min: 0, max: 1, unitStyle: 0, choices: ["Off", "On"], invisible: 0 };
-  return [deviceOn, ...visible];
+  return [deviceOn, ...automated, ...notAutomated];
 }
 
 export function readAmxd(file: string, bytes?: Buffer): M4lDevice {
