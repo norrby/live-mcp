@@ -12,6 +12,7 @@ import { ChangeTracker } from "../live/changes.js";
 import { M4lRegistry, isForbidden } from "../m4l/registry.js";
 import { M4lOrigins, type M4lSources } from "../m4l/origins.js";
 import { inLive, type M4lDevice, type M4lParameter } from "../m4l/amxd.js";
+import { foldSeries, SERIES_MIN } from "./series.js";
 import { findSection } from "../m4l/guide.js";
 import { AudioClip, AudioTrack, Device, MidiTrack, Track } from "@ableton-extensions/sdk";
 import { Bridge, BridgeError } from "../bridge/client.js";
@@ -319,7 +320,7 @@ export function createServer(deps: ServerDeps): McpServer {
     "list_parameters",
     {
       description:
-        "All parameters of a device: address, name, range, choices, current value. For recognised Max for Live devices also the long name, unit and help text, the device's own description (m4l.about: read it first, it is the author's word on how to drive the device), and the controls Live does not expose with the parameters that reach the same thing (m4l.notInLive). When the author wrote a guide to the instrument, m4l.guide names its sections, to read one at a time with device_guide. With display=true (needs the bridge) also the value as Live shows it, e.g. \"-12.0 dB\". Max for Live short names may repeat: address by index. A device with more than 64 parameters answers with compact rows (address, name, long name, value, min, max) unless asked with query or compact=false; query finds parameters by name or help text, and help=false leaves the help texts out. The device's description (m4l.about) comes without query; with query, or compact=true, it is left out.",
+        "All parameters of a device: address, name, range, choices, current value. For recognised Max for Live devices also the long name, unit and help text, the device's own description (m4l.about: read it first, it is the author's word on how to drive the device), and the controls Live does not expose with the parameters that reach the same thing (m4l.notInLive). When the author wrote a guide to the instrument, m4l.guide names its sections, to read one at a time with device_guide. With display=true (needs the bridge) also the value as Live shows it, e.g. \"-12.0 dB\". Max for Live short names may repeat: address by index. Parameters in a row that differ only by a counting number (a table kept one parameter per step: \"Step 00 Osc2\", \"Step 01 Osc2\" …) come as one series entry: its name with the number as a range, addresses \"t0/d0/p117..p181\", and values as a list, the n-th belonging to the parameter at the first address plus n; set one with set_parameters at its own address. A device with more than 64 parameters answers with compact rows (address, name, long name, value, min, max) unless asked with query or compact=false; query finds parameters by name or help text, and help=false leaves the help texts out. The device's description (m4l.about) comes without query; with query, or compact=true, it is left out.",
       inputSchema: {
         device: address,
         values: z.boolean().default(true).describe("Include current values"),
@@ -327,9 +328,10 @@ export function createServer(deps: ServerDeps): McpServer {
         query: z.string().optional().describe("Only parameters whose name, long name or help text contains this (case-insensitive)"),
         help: z.boolean().default(true).describe("Include the help texts of Max for Live parameters"),
         compact: z.boolean().optional().describe("Rows with address, name, long name, value, min and max only; askFirst still shows; true also leaves out the device description. Default: true for a device with more than 64 parameters and no query"),
+        series: z.boolean().default(true).describe(`Fold ${SERIES_MIN} or more parameters in a row whose names differ only by a counting number into one entry with their values as a list; false lists each`),
       },
     },
-    guarded(async ({ device, values, display, query, help, compact: asked }) => {
+    guarded(async ({ device, values, display, query, help, compact: asked, series }) => {
       const d = live.device(device);
       const infos = live.deviceParameters(device);
       // A small model cannot afford a large device whole; it gets the outline and is told how to ask for more.
@@ -370,7 +372,8 @@ export function createServer(deps: ServerDeps): McpServer {
       }
       const why = m4l ? undefined : unrecognised(device);
       if (why) out.m4l = { recognised: false, note: why };
-      out.parameters = q ? rows.filter((r, i) => matches(r.name) || matches(r.longName) || matches(m4l?.parameters[i]?.help)) : rows;
+      const listed = q ? rows.filter((r, i) => matches(r.name) || matches(r.longName) || matches(m4l?.parameters[i]?.help)) : rows;
+      out.parameters = series ? foldSeries(listed) : listed;
       if (compact && asked === undefined)
         out.note = `${rows.length} parameters, so compact rows; list_parameters with query (a name or a word from the help texts) gives choices and help for some, compact=false for all`;
       return out;
