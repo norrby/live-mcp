@@ -166,6 +166,18 @@ export function createServer(deps: ServerDeps): McpServer {
     return tracks;
   };
 
+  /**
+   * The names of the tracks (bridge indices; all, or those with a clip in the scene) that monitor In: Live plays their
+   * input then, not their clips. Empty when the bridge cannot say.
+   */
+  const monitoringIn = async (indices?: number[], scene?: number): Promise<string[]> => {
+    const arms = await bridge.call<{ index: number; name: string; monitor?: string }[]>("arms").catch(() => []);
+    const tracks = live.song.tracks;
+    return arms
+      .filter((a) => a.monitor === "In" && (!indices || indices.includes(a.index)))
+      .filter((a) => scene === undefined || tracks[a.index]?.clipSlots[scene]?.clip)
+      .map((a) => a.name);
+  };
   const arrangementIds = () => new Map(live.song.tracks.map((t) => [live.id(t), new Set(t.arrangementClips.map((c) => live.id(c)))]));
   /** What a take did: the clips it added per track, which tracks it was not meant for, and the clips that went. */
   const takeReport = () => {
@@ -1194,9 +1206,13 @@ export function createServer(deps: ServerDeps): McpServer {
       if (clip !== undefined) kwargs.clip = clip;
       if (scene !== undefined) kwargs.scene = scene;
       const fired = await bridge.call<Record<string, unknown>>("fire", [], kwargs);
-      if (!track || !sessionTakes.has(live)) return fired;
+      const silent = clip !== undefined || scene !== undefined ? await monitoringIn(track ? [kwargs.track as number] : undefined, scene) : [];
+      // Named as in Live, so the agent can tell the user which clip it means.
+      if (track && clip !== undefined) Object.assign(fired, { trackName: live.track(track).name, clipName: live.track(track).clipSlots[clip]?.clip?.name });
+      const answer = silent.length ? { ...fired, warning: `${silent.map((n) => `"${n}"`).join(", ")} monitor${silent.length > 1 ? "" : "s"} In, so ${silent.length > 1 ? "their" : "its"} clips play no notes or audio, only their automation; set_routing monitor Auto plays them` } : fired;
+      if (!track || !sessionTakes.has(live)) return answer;
       const recorded = await sessionTakeReport(kwargs.track as number);
-      return recorded ? { ...fired, recorded } : fired;
+      return recorded ? { ...answer, recorded } : answer;
     }),
   );
 
@@ -1225,7 +1241,8 @@ export function createServer(deps: ServerDeps): McpServer {
         ...(untilStopped ? { until_stopped: true } : {}),
       });
       sessionTakes.set(live, { track: live.id(t), slot });
-      return { ...started, slot: `${track}/s${slot}`, note: untilStopped
+      const silent = await monitoringIn([index]);
+      return { ...started, slot: `${track}/s${slot}`, ...(silent.length ? { warning: `"${t.name}" monitors In: the take records, but the clip plays no notes or audio afterwards until monitor is Auto (set_routing)` } : {}), note: untilStopped
         ? "recording until fire (this track, or this slot again) or transport stop; they answer with the clip"
         : `Live stops the recording itself after ${started.length} beats from the quantized start and plays the clip on; get_clips ${track} shows it, measure_audio clip reads it` };
     }),
