@@ -13,7 +13,7 @@ method with fixed parameters. A token is optional: when a file
 Commands: ping, amxd_list, amxd_read, guide_read, m4l_sources, midi_read, audio_read, browser_uri, clip_envelopes, set_clip_envelope, clear_clip_envelope, lom_dir, lom_doc, reload, device_dir, tracks, devices, add_device, delete_device, create_midi_track,
   transport, arms, record, selection, scenes, clips, fire, undo, redo, param, param_strs, param_set_display (for the live-mcp bridge),
 create_audio_track, delete_track, rename_track, select_track, routing,
-routing_options, param, browser, log.
+routing_options, param, browser, move_device, log.
 
 All LOM work happens on the main thread: the socket thread queues, _poll() drains
 the queue every 100 ms via schedule_message.
@@ -816,6 +816,15 @@ class LiveRemote(ControlSurface):
         if name is not None:
             d.name = name
         return {"name": d.name, "class_name": getattr(d, "class_name", None)}
+
+    def cmd_move_device(self, track, device, target, position):
+        """Move a device on a track to position (0 = first) on the target track; Live picks the nearest allowed position
+        (a MIDI effect cannot go after an instrument) and says which it took."""
+        d = self._device(track, device)
+        t = self._track(target)
+        position = max(0, min(int(position), len(t.devices)))
+        index = self.song().move_device(d, t, position)
+        return {"index": index, "devices": [x.name for x in t.devices]}
 
     def cmd_delete_device(self, track, device):
         t = self._track(track)

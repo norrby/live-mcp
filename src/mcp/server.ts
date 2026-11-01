@@ -40,7 +40,7 @@ const READ_ONLY = new Set(["get_set", "get_capabilities", "list_parameters", "fi
 /** Tools that change the set without removing or overwriting what is there; any other tool that writes counts as destructive. */
 const NOT_DESTRUCTIVE = new Set([
   "set_parameters", "set_parameter_display", "set_track", "set_tempo", "set_clip", "set_routing", "set_device_routing",
-  "insert_device", "load_browser_item", "create_track", "create_clip", "create_audio_clip", "import_midi_file",
+  "insert_device", "load_browser_item", "move_device", "create_track", "create_clip", "create_audio_clip", "import_midi_file",
   "transport", "selection", "scenes", "fire", "record_clip", "undo", "redo",
 ]);
 const IDEMPOTENT = new Set(["set_parameters", "set_parameter_display", "set_track", "set_tempo", "set_clip", "set_notes", "set_routing", "set_device_routing", "set_clip_automation", "clear_clip_automation"]);
@@ -669,6 +669,32 @@ export function createServer(deps: ServerDeps): McpServer {
       const depth = (f: (typeof found)[number]) => live.deviceAncestors(f.device).length;
       await inOneStep(lastFirst(found, (f) => depth(f) * 100_000 + f.index).map((f) => () => f.holder.deleteDevice(f.device)));
       return { deleted: deleted.length === 1 ? deleted[0] : deleted };
+    }),
+  );
+
+  server.registerTool(
+    "move_device",
+    {
+      description:
+        "Move a device to another position on its track, or onto another track (track). position counts from 0 (0 = first); leave it out to move the device last. Live keeps the order it allows (MIDI effects before the instrument, audio effects after it) and takes the nearest allowed position; the answer says which it took and lists the track's devices in their new order. Only devices directly on a track, not inside a rack. The device keeps its #id; its address changes." + viaBridge,
+      inputSchema: { device: address, track: address.optional().describe("The track to move it to; default its own"), position: z.number().int().min(0).optional() },
+    },
+    guarded(async ({ device, track, position }) => {
+      const d = live.locateDevice(device).device;
+      const id = live.id(d);
+      const [from, index] = bridgeDeviceArgs(live, device);
+      const target = track ? bridgeTrackIndex(live, track) : from;
+      const holder = (track ? live.track(track) : live.locateDevice(device).holder) as Track<V>;
+      const moved = await bridge.call<{ index: number; devices: string[] }>("move_device", [from, index, target, position ?? 1_000_000]);
+      return {
+        moved: d.name,
+        to: holder.name,
+        address: `${live.trackAddress(holder)}/d${moved.index}`,
+        id,
+        position: moved.index,
+        ...(position !== undefined && moved.index !== position ? { note: `Live put it at ${moved.index}, the nearest position it allows, not ${position}` } : {}),
+        devices: moved.devices,
+      };
     }),
   );
 

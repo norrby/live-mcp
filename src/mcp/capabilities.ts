@@ -29,7 +29,7 @@ export function capabilities(state: CapabilityState) {
       { what: "selection: selected track, device and scene; scenes and session clips; firing clips and scenes", available: bridge },
       { what: "undo and redo", available: bridge },
       { what: "parameter values as Live displays them (dB, Hz, ms) for built-in devices, and setting a parameter by such a value", available: bridge },
-      { what: "loading anything the browser shows: saved presets (with their routing), Max for Live devices, plug-ins", available: bridge },
+      { what: "loading anything the browser shows: saved presets (with their routing), Max for Live devices, plug-ins, at a chosen position; moving a device on its track or to another track", available: bridge },
       { what: "automation in session clips: read, draw with ramps and curves, clear", available: bridge },
     ],
     cannot: [
