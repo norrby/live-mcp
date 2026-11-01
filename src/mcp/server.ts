@@ -612,6 +612,7 @@ export function createServer(deps: ServerDeps): McpServer {
     guarded(async ({ track, item, settleMs, position }) => {
       const holder = live.track(track);
       const before = holder.devices.map((d) => live.id(d));
+      const everywhere = new Set(live.song.tracks.flatMap((t) => t.devices.map((d) => live.id(d))));
       // Live's main thread may be busy loading for a long while before the bridge answers; that counts too.
       const start = Date.now();
       const loaded = await bridge.call<{ from: string; item: string; uri?: string; devices_after: string[] }>("add_device", [bridgeTrackIndex(live, track), item]);
@@ -622,7 +623,11 @@ export function createServer(deps: ServerDeps): McpServer {
         await new Promise((r) => setTimeout(r, 100));
         added = holder.devices.findIndex((d) => !before.includes(live.id(d)));
       }
-      if (added < 0) return { loaded: loaded.item, from: loaded.from, note: "No new device appeared on the track within 10 s; Live may have replaced the selected device or loaded a preset into it." };
+      if (added < 0) {
+        const elsewhere = live.song.tracks.find((t) => t.devices.some((d) => !everywhere.has(live.id(d))));
+        if (elsewhere) throw new LiveError(`Live put "${loaded.item}" on the track "${elsewhere.name}" (${live.trackAddress(elsewhere)}), not on "${holder.name}". Tell the user; delete_device takes it away.`);
+        return { loaded: loaded.item, from: loaded.from, note: "No new device appeared on the track within 10 s; Live may have replaced the selected device or loaded a preset into it." };
+      }
       const device = holder.devices[added];
       let movedNote: string | undefined;
       if (position !== undefined && position !== added) {
