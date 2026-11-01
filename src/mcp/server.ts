@@ -11,7 +11,7 @@ import { explain } from "../live/errors.js";
 import { ChangeTracker } from "../live/changes.js";
 import { M4lRegistry, isForbidden } from "../m4l/registry.js";
 import { M4lOrigins, type M4lSources } from "../m4l/origins.js";
-import type { M4lDevice, M4lParameter } from "../m4l/amxd.js";
+import { inLive, type M4lDevice, type M4lParameter } from "../m4l/amxd.js";
 import { findSection } from "../m4l/guide.js";
 import { AudioClip, AudioTrack, Device, MidiTrack, Track } from "@ableton-extensions/sdk";
 import { Bridge, BridgeError } from "../bridge/client.js";
@@ -1296,7 +1296,7 @@ function bridgeDeviceArgs(live: LiveAdapter, device: string): [number, number] {
  */
 export function notInLive(m: M4lDevice, deviceAddress: string): { name: string; seeInstead?: string[] }[] {
   return m.all
-    .filter((p) => p.invisible !== 0)
+    .filter((p) => !inLive(p))
     .map((p) => {
       const words = p.longName.split(" ");
       const prefix = words.slice(0, -1).join(" ");

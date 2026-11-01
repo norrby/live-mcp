@@ -190,9 +190,15 @@ export function parametersOf(json: unknown): M4lParameter[] {
   return out;
 }
 
-/** Live's parameter order: "Device On", then the visible parameters sorted by long name in code-unit order. */
+/**
+ * Whether Live lists the parameter: automated and stored (invisible 0), and Max 9.1's two not-automated kinds (3, 4).
+ * Stored only (1) and hidden (2) are not.
+ */
+export const inLive = (p: M4lParameter): boolean => p.invisible === 0 || p.invisible === 3 || p.invisible === 4;
+
+/** Live's parameter order: "Device On", then the parameters Live lists sorted by long name in code-unit order. */
 export function liveOrder(all: M4lParameter[]): M4lParameter[] {
-  const visible = all.filter((p) => p.invisible === 0).sort((a, b) => (a.longName < b.longName ? -1 : a.longName > b.longName ? 1 : 0));
+  const visible = all.filter(inLive).sort((a, b) => (a.longName < b.longName ? -1 : a.longName > b.longName ? 1 : 0));
   const deviceOn: M4lParameter = { longName: "Device On", shortName: "Device On", type: 2, min: 0, max: 1, unitStyle: 0, choices: ["Off", "On"], invisible: 0 };
   return [deviceOn, ...visible];
 }

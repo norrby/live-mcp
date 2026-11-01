@@ -36,11 +36,11 @@ test("[ask first] and [ready] in a help text become marks and leave the help", (
   assert.deepEqual([ready.help, ready.askFirst, ready.ready], ["Set up and listening.", undefined, true]);
 });
 
-test("liveOrder puts Device On first and sorts visible parameters by long name in code-unit order", () => {
+test("liveOrder puts Device On first and sorts the parameters Live lists (invisible 0, 3 and 4) by long name in code-unit order", () => {
   const all = parametersOf({
-    patcher: { boxes: [box("Legato", "Leg"), box("LFO1 Speed", "Speed"), box("Hidden", "H", { parameter_invisible: 2 }), box("Attack", "A")] },
+    patcher: { boxes: [box("Legato", "Leg"), box("LFO1 Speed", "Speed"), box("Hidden", "H", { parameter_invisible: 2 }), box("Attack", "A"), box("Stored", "S", { parameter_invisible: 1 }), box("Push Only", "P", { parameter_invisible: 3 }), box("Not Automated", "N", { parameter_invisible: 4 })] },
   });
-  assert.deepEqual(liveOrder(all).map((p) => p.longName), ["Device On", "Attack", "LFO1 Speed", "Legato"]);
+  assert.deepEqual(liveOrder(all).map((p) => p.longName), ["Device On", "Attack", "LFO1 Speed", "Legato", "Not Automated", "Push Only"]);
 });
 
 // Optional check against a real device: the same device frozen and unfrozen, and a JSON dump
