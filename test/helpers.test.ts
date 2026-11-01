@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { refAddress, uriToFile } from "../src/mcp/server.js";
+import { fileNamed, refAddress, uriToFile } from "../src/mcp/server.js";
 import { measure } from "../src/audio/analyse.js";
 import { parseMidi } from "../src/midi/smf.js";
 
@@ -33,4 +33,12 @@ test("a MIDI file with 0 ticks per beat is refused instead of giving endless bea
   const h = Buffer.alloc(14);
   h.write("MThd", 0, "latin1"); h.writeUInt32BE(6, 4); h.writeUInt16BE(1, 8); h.writeUInt16BE(0, 10); h.writeUInt16BE(0, 12);
   assert.throws(() => parseMidi(h), /0 ticks per beat/);
+});
+
+test("a browser item that names no file is found by its name, when only one file has it", () => {
+  const files = ["/lib/Presets/A/Filter.amxd", "/lib/Presets/A/Filter Dev.amxd", "/places/Echo.amxd", "/lib/Echo.amxd"];
+  assert.equal(fileNamed(files, "Filter.amxd"), "/lib/Presets/A/Filter.amxd");
+  assert.equal(fileNamed(files, "Filter Dev"), "/lib/Presets/A/Filter Dev.amxd");
+  assert.equal(fileNamed(files, "Echo.amxd"), undefined, "two files with the name: neither is known to be the one");
+  assert.equal(fileNamed(files, "Gate.amxd"), undefined);
 });

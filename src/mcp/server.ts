@@ -630,7 +630,8 @@ export function createServer(deps: ServerDeps): McpServer {
         if (registry.via === "bridge") await registry.refresh();
       }
       // Live MCP chose the file, so the device is known to come from it, whatever copies of it lie elsewhere.
-      const file = loaded.uri ? uriToFile(loaded.uri, deps.userLibrary ?? path.join(process.env.HOME ?? "", "Music", "Ableton", "User Library")) : undefined;
+      // Found under Live's Max for Live category, an item names no file (query:M4L#…:FileId_…); the one file with its name does.
+      const file = (loaded.uri ? uriToFile(loaded.uri, deps.userLibrary ?? path.join(process.env.HOME ?? "", "Music", "Ableton", "User Library")) : undefined) ?? fileNamed(registry.files().map((f) => f.file), loaded.item);
       if (file && /\.amxd$/i.test(file)) await origins.remember(live.id(device), file);
       const m4l = m4lFor(live.id(device));
       const signal = m4l?.parameters.findIndex((p) => p.ready) ?? -1;
@@ -1370,6 +1371,13 @@ export function newOrigins(live: LiveAdapter, registry: M4lRegistry, bridge: Bri
 }
 
 /** The file behind a browser item's uri: the User Library or a folder under Places; undefined for anything else. */
+/** The one file among files named like a browser item ("My Device" or "My Device.amxd"); undefined for none or several. */
+export function fileNamed(files: string[], item: string): string | undefined {
+  const want = item.replace(/\.amxd$/i, "").toLowerCase();
+  const hits = files.filter((f) => path.basename(f).replace(/\.amxd$/i, "").toLowerCase() === want);
+  return hits.length === 1 ? hits[0] : undefined;
+}
+
 export function uriToFile(uri: string, userLibrary: string): string | undefined {
   const [where, rest = ""] = uri.split("#");
   let parts: string[];
