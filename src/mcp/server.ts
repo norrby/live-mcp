@@ -138,25 +138,29 @@ export function createServer(deps: ServerDeps): McpServer {
   const overview = async () => {
     await origins.sync();
     const song = live.song;
-    const tracks = await withImplicitArm(live.tracks());
+    const tracks = await withBridgeState(live.tracks());
     for (const t of tracks) for (const d of t.devices) annotateDevice(d);
     return { tempo: song.tempo, scenes: song.scenes.length, tracks };
   };
   /**
-   * Adds Live's implicit arm (the selected MIDI track records while no MIDI track is armed) from the bridge, which
-   * alone can read it; without the bridge, or if it is slow, the tracks come back as they are.
+   * Adds what only the bridge can read: Live's implicit arm (the selected MIDI track records while no MIDI track is
+   * armed), monitoring and routing; without the bridge, or if it is slow, the tracks come back as they are.
    */
-  const withImplicitArm = async <T extends TrackInfo>(tracks: T[]): Promise<T[]> => {
+  const withBridgeState = async <T extends TrackInfo>(tracks: T[]): Promise<T[]> => {
     let timer: Parameters<typeof clearTimeout>[0];
     const arms = await Promise.race([
-      bridge.call<{ index: number; implicit_arm: boolean }[]>("arms").catch(() => undefined),
+      bridge.call<{ index: number; implicit_arm: boolean; monitor?: TrackInfo["monitor"]; input?: string; output?: string }[]>("arms").catch(() => undefined),
       new Promise<undefined>((r) => (timer = setTimeout(r, 1500))),
     ]).finally(() => clearTimeout(timer));
     if (!arms) return tracks;
     const regular = live.song.tracks.map((t) => live.id(t));
     for (const a of arms) {
       const info = tracks.find((t) => t.id === regular[a.index]);
-      if (info && info.arm !== undefined) info.implicitArm = a.implicit_arm;
+      if (!info || info.arm === undefined) continue;
+      info.implicitArm = a.implicit_arm;
+      if (a.monitor) info.monitor = a.monitor;
+      if (a.input) info.input = a.input;
+      if (a.output) info.output = a.output;
     }
     return tracks;
   };
@@ -310,7 +314,7 @@ export function createServer(deps: ServerDeps): McpServer {
   server.registerTool(
     "get_set",
     {
-      description: "The open Live set: tempo, tracks (with mute/solo/arm and their session clips), devices with addresses and parameter counts; Max for Live devices are named after their .amxd file when recognised. Start here; addresses from this answer are used by every other tool.",
+      description: "The open Live set: tempo, tracks (with mute/solo/arm, monitoring, input and output routing, and their session clips), devices with addresses and parameter counts; Max for Live devices are named after their .amxd file when recognised. Start here; addresses from this answer are used by every other tool.",
       inputSchema: {},
     },
     guarded(() => overview()),
@@ -547,7 +551,7 @@ export function createServer(deps: ServerDeps): McpServer {
         if (solo !== undefined) t.solo = solo;
         if (arm !== undefined) t.arm = arm;
       });
-      return (await withImplicitArm([live.trackInfo(t, track)]))[0];
+      return (await withBridgeState([live.trackInfo(t, track)]))[0];
     }),
   );
 

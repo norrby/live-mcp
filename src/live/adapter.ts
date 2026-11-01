@@ -68,6 +68,10 @@ export interface TrackInfo {
   arm?: boolean;
   /** Live records on the selected MIDI track while no MIDI track is armed (the pink arm button); from the bridge */
   implicitArm?: boolean;
+  /** monitoring (In, Auto, Off), and where the input comes from and the output goes; from the bridge */
+  monitor?: "In" | "Auto" | "Off";
+  input?: string;
+  output?: string;
   group?: string;
   clips?: ClipInfo[];
   devices: DeviceInfo[];

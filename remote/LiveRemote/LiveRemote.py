@@ -640,11 +640,17 @@ class LiveRemote(ControlSurface):
 
     def cmd_arms(self):
         """Every track that can record: arm, Live's implicit arm (the selected MIDI track while no MIDI track is armed),
-        and monitoring."""
+        monitoring, and where its input comes from and its output goes ("type / channel")."""
         return [{"index": i, "name": t.name, "kind": self._track_kind(t), "arm": t.arm,
                  "implicit_arm": getattr(t, "implicit_arm", False),
-                 "monitor": ["In", "Auto", "Off"][t.current_monitoring_state]}
+                 "monitor": ["In", "Auto", "Off"][t.current_monitoring_state],
+                 "input": self._route(t.input_routing_type, t.input_routing_channel),
+                 "output": self._route(t.output_routing_type, t.output_routing_channel)}
                 for i, t in enumerate(self.song().tracks) if t.can_be_armed]
+
+    def _route(self, kind, channel):
+        names = [n for n in (self._dn(kind), self._dn(channel)) if n]
+        return " / ".join(names)
 
     def _would_record(self):
         """The tracks Live records on when the arrangement record button is on: armed, or armed implicitly."""
