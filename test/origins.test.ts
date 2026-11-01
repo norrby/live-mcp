@@ -5,6 +5,14 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { M4lRegistry } from "../src/m4l/registry.js";
 import { M4lOrigins, type M4lSources } from "../src/m4l/origins.js";
+import { initialize } from "@ableton-extensions/sdk";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { LiveAdapter } from "../src/live/adapter.js";
+import { Bridge } from "../src/bridge/client.js";
+import { createServer } from "../src/mcp/server.js";
+import { ChangeTracker } from "../src/live/changes.js";
+import { smallSet } from "./fake-host.js";
 
 /** An unfrozen .amxd file: header, "ptch", then the patcher JSON. */
 function amxd(params: [long: string, short: string][]): Buffer {
@@ -85,4 +93,22 @@ test("without a bridge the origins stay empty and the fingerprint decides as bef
   await origins.sync(true);
   assert.equal(origins.isMax("#1"), undefined, "unknown, not false: nothing can be said without the bridge");
   assert.equal(origins.setFile, null);
+});
+
+test("get_set calls a Max for Live device whose file is unknown that, and list_parameters says what the user can do", async () => {
+  const live = new LiveAdapter(initialize(smallSet().activation(), "1.0.0"));
+  const registry = new M4lRegistry({ directories: [] });
+  const sources: M4lSources = { set: null, saved: [], max: [{ address: "t0/d0", name: "" }], places: [] };
+  const origins = new M4lOrigins(registry, async () => sources, (a) => live.id(live.device(a)));
+  const server = createServer({ live, registry, origins, bridge: new Bridge({ port: 1 }), changes: new ChangeTracker(live), version: "test", log: () => {} });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(a);
+  const c = new Client({ name: "test", version: "0" });
+  await c.connect(b);
+  const call = async (name: string, args: object) => JSON.parse(((await c.callTool({ name, arguments: args })) as { content: { text: string }[] }).content[0].text);
+  const set = await call("get_set", {});
+  assert.equal(set.tracks[0].devices[0].kind, "Max for Live, file unknown");
+  const params = await call("list_parameters", { device: "t0/d0" });
+  assert.equal(params.m4l.recognised, false);
+  assert.match(params.m4l.note, /never been saved.*Cmd\/Ctrl\+S/s);
 });

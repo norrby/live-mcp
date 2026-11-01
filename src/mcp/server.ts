@@ -206,6 +206,8 @@ export function createServer(deps: ServerDeps): McpServer {
     // Several files with the same parameters, none named like the device: kind names them all rather than guess.
     const ms = registry.matches(dev.parameters.map((p) => p.name), dev.name, origins.originOf(live.id(dev)));
     if (ms.length) d.kind = "Max for Live: " + ms.map((m) => path.basename(m.file, ".amxd")).join(" or ");
+    // Its file unknown, it is still a Max for Live device; list_parameters says why and what the user can do.
+    else if (origins.isMax(live.id(dev))) d.kind = "Max for Live, file unknown";
     for (const c of d.chains ?? []) for (const dd of c.devices) annotateDevice(dd);
   };
 
