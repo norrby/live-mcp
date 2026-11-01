@@ -601,14 +601,15 @@ export function createServer(deps: ServerDeps): McpServer {
   server.registerTool(
     "load_browser_item",
     {
-      description: "Load any loadable browser item onto a track by name: a saved preset (\"My Synth.adv\" keeps everything it was saved with, including an External Instrument's MIDI To / Audio From), a Max for Live device (\"My Device.amxd\"), a plug-in or a built-in device. Live places it after the track's selected device, or last, and selects the track while doing so. The first match across the browser roots wins; use browse to see what exists. A MIDI file (.mid) does not load this way: use import_midi_file. Answers once the new device is ready to be driven (ready, readyAfterMs: its parameters exist and have held still, at least a second after loading, then for a Max for Live device until its parameter marked [ready] reaches its max, or, without one, settleMs more, since its patch may still be setting itself up while its parameters look still; ready false after 15 s)." + viaBridge,
+      description: "Load any loadable browser item onto a track by name: a saved preset (\"My Synth.adv\" keeps everything it was saved with, including an External Instrument's MIDI To / Audio From), a Max for Live device (\"My Device.amxd\"), a plug-in or a built-in device. Live places it after the track's selected device, or last, unless position says where (move_device moves one later), and selects the track while doing so. The first match across the browser roots wins; use browse to see what exists. A MIDI file (.mid) does not load this way: use import_midi_file. Answers once the new device is ready to be driven (ready, readyAfterMs: its parameters exist and have held still, at least a second after loading, then for a Max for Live device until its parameter marked [ready] reaches its max, or, without one, settleMs more, since its patch may still be setting itself up while its parameters look still; ready false after 15 s)." + viaBridge,
       inputSchema: {
         track: address,
         item: z.string().describe("Name as the browser shows it, with or without extension"),
         settleMs: z.number().int().min(0).max(30_000).optional().describe("Max for Live devices: time to wait after the parameters hold still; default 3000. Built-in devices: default 0"),
+        position: z.number().int().min(0).optional().describe("Where on the track, from 0 (0 = first); the device is moved there right after loading, a second undo step. Live keeps MIDI effects before the instrument and audio effects after it"),
       },
     },
-    guarded(async ({ track, item, settleMs }) => {
+    guarded(async ({ track, item, settleMs, position }) => {
       const holder = live.track(track);
       const before = holder.devices.map((d) => live.id(d));
       // Live's main thread may be busy loading for a long while before the bridge answers; that counts too.
@@ -623,6 +624,11 @@ export function createServer(deps: ServerDeps): McpServer {
       }
       if (added < 0) return { loaded: loaded.item, from: loaded.from, note: "No new device appeared on the track within 10 s; Live may have replaced the selected device or loaded a preset into it." };
       const device = holder.devices[added];
+      let movedNote: string | undefined;
+      if (position !== undefined && position !== added) {
+        const moved = await bridge.call<{ index: number }>("move_device", [bridgeTrackIndex(live, track), added, bridgeTrackIndex(live, track), position]);
+        if (moved.index !== position) movedNote = `Live put it at position ${moved.index}, the nearest it allows, not ${position}`;
+      }
       const { ready } = await settled(device);
       // A device file saved just now is not known yet; read the files again so its [ready] mark is found.
       if (/\.amxd$/i.test(item)) {
@@ -646,9 +652,10 @@ export function createServer(deps: ServerDeps): McpServer {
         const settle = settleMs ?? (/\.amxd$/i.test(item) || m4l ? 3000 : 0);
         if (settle) await new Promise((r) => setTimeout(r, settle));
       }
-      const info = live.deviceInfo(holder.devices[added], `${track}/d${added}`);
+      const at = holder.devices.findIndex((d) => live.id(d) === live.id(device));
+      const info = live.deviceInfo(device, `${live.trackAddress(holder)}/d${at}`);
       annotateDevice(info);
-      return { loaded: loaded.item, from: loaded.from, ready: waited, readyAfterMs: Date.now() - start, ...(signal >= 0 ? { readyBy: "the device's [ready] parameter" } : {}), device: info };
+      return { loaded: loaded.item, from: loaded.from, ready: waited, readyAfterMs: Date.now() - start, ...(signal >= 0 ? { readyBy: "the device's [ready] parameter" } : {}), ...(movedNote ? { note: movedNote } : {}), device: info };
     }),
   );
 
