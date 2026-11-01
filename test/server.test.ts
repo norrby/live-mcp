@@ -487,6 +487,12 @@ test("measure_audio reads a clip's own file cut at its markers, with windows, do
   assert.equal(m.data.windows.rows[0][3], null);
   assert.ok(Math.abs(m.data.windows.rows[1][3] - 440) < 0.1, `hz ${m.data.windows.rows[1][3]}`);
   assert.deepEqual(m.data.onsets, [0.5]);
+  assert.equal(m.data.onsetLevels.used, -30);
+  const auto = await call(c, "measure_audio", { clip: "t1/s0", onsetDbfs: "auto" });
+  assert.deepEqual(auto.data.onsets, [0.5]);
+  assert.equal(auto.data.onsetLevels.floorDbfs, -80, "silence counts as -80 dBFS");
+  const low = await call(c, "measure_audio", { clip: "t1/s0", onsetDbfs: -90 });
+  assert.match(low.data.onsetNote, /at or below the level between the notes/);
   const plain = await call(c, "measure_audio", { clip: "t1/s0" });
   assert.equal(plain.data.windows, undefined, "no windows unless asked");
   assert.equal(plain.data.onsets, undefined);

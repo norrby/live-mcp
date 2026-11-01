@@ -264,6 +264,23 @@ export function onsets(audio: Audio, thresholdDbfs: number, windowMs = 10): numb
   return out;
 }
 
+/**
+ * The levels between and during the notes, from the RMS of `windowMs` windows: the floor (10th percentile), the top
+ * (95th percentile) and the threshold halfway between them in dB, the one onsets are best found at. No threshold when
+ * floor and top lie within 12 dB of each other: then there are no gaps to tell the notes by.
+ */
+export function onsetLevels(audio: Audio, windowMs = 10): { floorDbfs: number; topDbfs: number; thresholdDbfs?: number } {
+  const frames = audio.channels[0]?.length ?? 0;
+  const per = Math.max(1, Math.round((windowMs / 1000) * audio.sampleRate));
+  const levels: number[] = [];
+  for (let from = 0; from < frames; from += per) levels.push(Math.max(SILENT_DBFS, db(peakAndRms(audio, from, Math.min(frames, from + per)).rms)));
+  levels.sort((a, b) => a - b);
+  const at = (q: number) => levels[Math.min(levels.length - 1, Math.floor(q * levels.length))] ?? SILENT_DBFS;
+  const floorDbfs = round(at(0.1));
+  const topDbfs = round(at(0.95));
+  return topDbfs - floorDbfs >= 12 ? { floorDbfs, topDbfs, thresholdDbfs: round((floorDbfs + topDbfs) / 2) } : { floorDbfs, topDbfs };
+}
+
 /** In-place iterative radix-2 FFT; the length is a power of two. */
 function fft(re: Float64Array, im: Float64Array): void {
   const n = re.length;

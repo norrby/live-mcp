@@ -2,7 +2,7 @@
 // One instance per HTTP request (stateless), so everything here must be cheap to construct.
 import * as path from "node:path";
 import * as fs from "node:fs";
-import { measure, onsets, parseAudio, windows, type Audio } from "../audio/analyse.js";
+import { measure, onsetLevels, onsets, parseAudio, windows, type Audio } from "../audio/analyse.js";
 import { parseMidi } from "../midi/smf.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -1079,7 +1079,7 @@ export function createServer(deps: ServerDeps): McpServer {
     "measure_audio",
     {
       description:
-        "Measure audio, since you cannot listen: sample peak and RMS per channel in dBFS, integrated loudness in LUFS (ITU-R BS.1770), clipped samples, whether it is silent, and a coarse loudness curve (32 slices, dBFS). Two sources: track with start and end (beats) renders that part of an audio track's arrangement, the audio of its clips before its effects (MIDI tracks, effects and the master cannot be rendered by any API, and session clips are not in the arrangement); clip reads an audio clip's own file (session or arrangement) between its start and end markers, before warping, gain and effects. windowMs adds peak and RMS per window (at most 1000 rows); hzRange adds the dominant frequency of each window within that range in Hz (a 1000 ms window resolves to about 0.01 Hz, a 10 ms one to a few Hz; windowMs defaults to 1000 with it); onsetDbfs lists the seconds at which the signal rises to that RMS level after having been below it (the start counts as below), measured over 10 ms.",
+        "Measure audio, since you cannot listen: sample peak and RMS per channel in dBFS, integrated loudness in LUFS (ITU-R BS.1770), clipped samples, whether it is silent, and a coarse loudness curve (32 slices, dBFS). Two sources: track with start and end (beats) renders that part of an audio track's arrangement, the audio of its clips before its effects (MIDI tracks, effects and the master cannot be rendered by any API, and session clips are not in the arrangement); clip reads an audio clip's own file (session or arrangement) between its start and end markers, before warping, gain and effects. windowMs adds peak and RMS per window (at most 1000 rows); hzRange adds the dominant frequency of each window within that range in Hz (a 1000 ms window resolves to about 0.01 Hz, a 10 ms one to a few Hz; windowMs defaults to 1000 with it); onsetDbfs lists the seconds at which the signal rises to that RMS level after having been below it (the start counts as below), measured over 10 ms, with the level between the notes (floor), the level of the notes (top) and the threshold halfway between; \"auto\" uses that one. Calibrate on audio whose notes you know before drawing conclusions.",
       inputSchema: {
         track: address.optional(),
         start: z.number().min(0).optional().describe("Beats, with track"),
@@ -1087,7 +1087,7 @@ export function createServer(deps: ServerDeps): McpServer {
         clip: address.optional().describe('An audio clip, like "t1/s0", "t1/a2" or "#id"; instead of track'),
         windowMs: z.number().positive().optional().describe("Peak and RMS per window of this many milliseconds"),
         hzRange: z.tuple([z.number().min(0), z.number().positive()]).optional().describe("[min, max] Hz: the dominant frequency per window inside this range"),
-        onsetDbfs: z.number().max(0).optional().describe("RMS level in dBFS above which a rise after silence counts as an onset"),
+        onsetDbfs: z.union([z.number().max(0), z.literal("auto")]).optional().describe('RMS level in dBFS above which a rise after a gap counts as an onset, or "auto" for the threshold halfway between the gaps and the notes'),
       },
     },
     guarded(async ({ track, start, end, clip, windowMs, hzRange, onsetDbfs }) => {
@@ -1096,8 +1096,16 @@ export function createServer(deps: ServerDeps): McpServer {
       const ms = windowMs ?? (hzRange ? 1000 : undefined);
       const extra = (audio: Audio) => ({
         ...(ms !== undefined ? { windows: windows(audio, ms, hzRange ? { min: hzRange[0], max: hzRange[1] } : undefined) } : {}),
-        ...(onsetDbfs !== undefined ? { onsets: onsets(audio, onsetDbfs) } : {}),
+        ...(onsetDbfs !== undefined ? onsetAnswer(audio, onsetDbfs) : {}),
       });
+      // The levels come with every onset list, so a threshold that lies in the gaps or above the notes shows.
+      const onsetAnswer = (audio: Audio, asked: number | "auto") => {
+        const levels = onsetLevels(audio);
+        const threshold = asked === "auto" ? levels.thresholdDbfs : asked;
+        if (threshold === undefined) return { onsets: [], onsetLevels: levels, onsetNote: `the gaps (${levels.floorDbfs} dBFS) and the notes (${levels.topDbfs} dBFS) lie within 12 dB of each other, so no level tells them apart; measure a part with gaps between the notes` };
+        const warn = threshold <= levels.floorDbfs ? `the threshold ${threshold} dBFS lies at or below the level between the notes (${levels.floorDbfs}); onsets will be missed` : threshold >= levels.topDbfs ? `the threshold ${threshold} dBFS lies at or above the level of the notes (${levels.topDbfs}); onsets will be missed` : undefined;
+        return { onsets: onsets(audio, threshold), onsetLevels: { ...levels, used: threshold }, ...(warn ? { onsetNote: warn + (levels.thresholdDbfs !== undefined ? `; ${levels.thresholdDbfs} or "auto" fits` : "") } : {}) };
+      };
       const tooLarge = 200 * 1024 * 1024;
       if (clip !== undefined) {
         const { clip: c, address: a } = live.locateClip(clip);

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { dominantHz, measure, onsets, parseAudio, windows } from "../src/audio/analyse.js";
+import { dominantHz, measure, onsetLevels, onsets, parseAudio, windows } from "../src/audio/analyse.js";
 
 const sine = (rate: number, seconds: number, amp: number, hz = 997) => Float32Array.from({ length: Math.round(rate * seconds) }, (_, i) => amp * Math.sin((2 * Math.PI * hz * i) / rate));
 
@@ -89,4 +89,22 @@ test("windows give peak and RMS per span, the dominant frequency to a hundredth 
   assert.ok(Math.abs((dominantHz(two, rate, 20, 20000) ?? 0) - 220) <= 0.02, "the stronger partial wins");
   assert.ok(Math.abs((dominantHz(two, rate, 1000, 5000) ?? 0) - 3000) <= 0.02, "the range picks the weaker one");
   assert.equal(dominantHz(new Float64Array(rate), rate, 20, 20000), null);
+});
+
+test("onset levels put the threshold between the gaps and the notes, where a guessed one can miss every onset", () => {
+  const rate = 8000;
+  // Notes at half scale (-9 dBFS RMS) with a hum of -37 dBFS RMS between them: 0.5 s hum, 1 s note, 0.5 s hum, 1 s note.
+  const signal = Float32Array.from({ length: rate * 3 }, (_, i) => {
+    const t = i / rate;
+    const note = (t >= 0.5 && t < 1.5) || t >= 2;
+    return (note ? 0.5 : 0.02) * Math.sin(2 * Math.PI * 220 * t);
+  });
+  const audio = { sampleRate: rate, channels: [signal] };
+  const levels = onsetLevels(audio);
+  assert.ok(Math.abs(levels.floorDbfs - -37) < 1, `floor ${levels.floorDbfs}`);
+  assert.ok(Math.abs(levels.topDbfs - -9) < 1, `top ${levels.topDbfs}`);
+  assert.deepEqual(onsets(audio, levels.thresholdDbfs!), [0.5, 2]);
+  assert.deepEqual(onsets(audio, -40), [0], "a threshold below the hum sees one long note");
+  const flat = { sampleRate: rate, channels: [Float32Array.from({ length: rate }, (_, i) => 0.5 * Math.sin(2 * Math.PI * 220 * (i / rate)))] };
+  assert.equal(onsetLevels(flat).thresholdDbfs, undefined, "no gaps, no threshold");
 });
