@@ -139,7 +139,6 @@ export function createServer(deps: ServerDeps): McpServer {
     await origins.sync();
     const song = live.song;
     const tracks = await withBridgeState(live.tracks());
-    for (const t of tracks) for (const d of t.devices) annotateDevice(d);
     return { tempo: song.tempo, scenes: song.scenes.length, tracks };
   };
   /**
@@ -147,6 +146,8 @@ export function createServer(deps: ServerDeps): McpServer {
    * armed), monitoring and routing; without the bridge, or if it is slow, the tracks come back as they are.
    */
   const withBridgeState = async <T extends TrackInfo>(tracks: T[]): Promise<T[]> => {
+    // Every answer that shows a track names its Max for Live devices alike.
+    for (const t of tracks) for (const d of t.devices) annotateDevice(d);
     let timer: Parameters<typeof clearTimeout>[0];
     const arms = await Promise.race([
       bridge.call<{ index: number; implicit_arm: boolean; monitor?: TrackInfo["monitor"]; input?: string; output?: string }[]>("arms").catch(() => undefined),
