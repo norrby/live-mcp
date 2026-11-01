@@ -105,7 +105,7 @@ test("get_set calls a Max for Live device whose file is unknown that, and list_p
   await server.connect(a);
   const c = new Client({ name: "test", version: "0" });
   await c.connect(b);
-  const call = async (name: string, args: object) => JSON.parse(((await c.callTool({ name, arguments: args })) as { content: { text: string }[] }).content[0].text);
+  const call = async (name: string, args: Record<string, unknown>) => JSON.parse(((await c.callTool({ name, arguments: args })) as { content: { text: string }[] }).content[0].text);
   const set = await call("get_set", {});
   assert.equal(set.tracks[0].devices[0].kind, "Max for Live, file unknown");
   const params = await call("list_parameters", { device: "t0/d0" });
