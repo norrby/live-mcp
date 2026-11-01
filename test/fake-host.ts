@@ -34,6 +34,8 @@ export class FakeLive {
   transactionDepth = 0;
   /** value writes that happened inside a transaction, per transaction */
   writesInTransaction: number[] = [];
+  /** Live has quit or stopped talking to the host: what is asked of it is never answered */
+  silent = false;
 
   constructor() {
     this.root = this.add("Application", null);
@@ -242,7 +244,7 @@ export class FakeLive {
       deviceParameterGetIsQuantized: (p: Handle) => self.get(p.id).quantized,
       deviceParameterGetDefaultValue: (p: Handle) => self.get(p.id).default,
       deviceParameterGetValueItems: (p: Handle) => (self.get(p.id).items as string[]).map((name) => ({ name, shortName: name })),
-      deviceParameterGetInternalValue: (p: Handle, ok: (v: number) => void) => setImmediate(() => ok(self.get(p.id).value as number)),
+      deviceParameterGetInternalValue: (p: Handle, ok: (v: number) => void) => self.silent || setImmediate(() => ok(self.get(p.id).value as number)),
       deviceParameterSetInternalValue: (p: Handle, v: number, ok: () => void, err: (e: string) => void) => {
         const o = self.get(p.id);
         if (self.transactionDepth > 0) self.writesInTransaction[self.writesInTransaction.length - 1]++;

@@ -453,6 +453,18 @@ export class LiveAdapter {
     return d.parameters.map((p, i) => this.parameterInfo(p, `${address}/p${i}`, i));
   }
 
+  /**
+   * Throws unless Live answers in time. The Extension Host keeps its own copy of the set and goes on answering from it
+   * after Live has quit or stopped talking to it, so a value is asked of Live itself.
+   */
+  async reachable(timeoutMs = 5000): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<"late">((r) => (timer = setTimeout(() => r("late"), timeoutMs)));
+    const answer = await Promise.race([this.song.mainTrack.mixer.volume.getValue(), late]).finally(() => clearTimeout(timer));
+    if (answer === "late")
+      throw new LiveError(`Live does not answer (waited ${timeoutMs / 1000} s): it may have quit, or be busy loading something. Nothing was read or changed; what Live MCP knows of the set may be out of date, so ask again in a moment.`);
+  }
+
   async readValues(params: DeviceParameter<V>[]): Promise<number[]> {
     return Promise.all(params.map((p) => p.getValue()));
   }

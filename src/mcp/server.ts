@@ -73,7 +73,7 @@ const fail = (e: unknown): ToolResult => ({ isError: true, content: [{ type: "te
 /** A bridge breakpoint, [time, value] or [time, value, x1, y1, x2, y2], in the shape set_clip_automation takes. */
 const toPoint = ([time, value, x1, y1, x2, y2]: number[]) => (x1 === undefined ? { time, value } : { time, value, curve: { x1, y1, x2, y2 } });
 const bigintSafe = (_k: string, v: unknown) => (typeof v === "bigint" ? Number(v) : v);
-const guarded = <A>(fn: (args: A) => Promise<unknown> | unknown) => async (args: A): Promise<ToolResult> => {
+const toResult = <A>(fn: (args: A) => Promise<unknown> | unknown) => async (args: A): Promise<ToolResult> => {
   try {
     return json(await fn(args));
   } catch (e) {
@@ -96,6 +96,12 @@ const note = z.object({
 
 export function createServer(deps: ServerDeps): McpServer {
   const { live, registry, bridge, changes } = deps;
+  // No answer from a copy of the set Live no longer keeps up to date: every tool first makes sure Live answers.
+  const guarded = <A>(fn: (args: A) => Promise<unknown> | unknown) =>
+    toResult(async (args: A) => {
+      await live.reachable();
+      return fn(args);
+    });
   const server = new McpServer(
     { name: "live-mcp", version: deps.version },
     {
