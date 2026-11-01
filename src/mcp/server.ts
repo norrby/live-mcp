@@ -586,6 +586,8 @@ export function createServer(deps: ServerDeps): McpServer {
     guarded(async ({ track, item, settleMs }) => {
       const holder = live.track(track);
       const before = holder.devices.map((d) => live.id(d));
+      // Live's main thread may be busy loading for a long while before the bridge answers; that counts too.
+      const start = Date.now();
       const loaded = await bridge.call<{ from: string; item: string; uri?: string; devices_after: string[] }>("add_device", [bridgeTrackIndex(live, track), item]);
       // Live may add a large device a moment after the bridge has answered.
       const t0 = Date.now();
@@ -620,7 +622,7 @@ export function createServer(deps: ServerDeps): McpServer {
       }
       const info = live.deviceInfo(holder.devices[added], `${track}/d${added}`);
       annotateDevice(info);
-      return { loaded: loaded.item, from: loaded.from, ready: waited, readyAfterMs: Date.now() - t0, ...(signal >= 0 ? { readyBy: "the device's [ready] parameter" } : {}), device: info };
+      return { loaded: loaded.item, from: loaded.from, ready: waited, readyAfterMs: Date.now() - start, ...(signal >= 0 ? { readyBy: "the device's [ready] parameter" } : {}), device: info };
     }),
   );
 
